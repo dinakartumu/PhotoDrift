@@ -66,25 +66,34 @@ actor LightroomAPIClient {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(AdobeConfig.clientID, forHTTPHeaderField: "X-API-Key")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await session.data(for: request)
-
-        if let httpResponse = response as? HTTPURLResponse {
-            if httpResponse.statusCode == 401 {
-                let newToken = try await AdobeAuthManager.shared.refreshAccessToken()
-                request.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
-                let (retryData, retryResponse) = try await session.data(for: request)
-                guard let retryHTTP = retryResponse as? HTTPURLResponse, retryHTTP.statusCode == 200 else {
-                    throw LightroomError.downloadFailed
-                }
-                return retryData
-            }
-            guard httpResponse.statusCode == 200 else {
-                throw LightroomError.downloadFailed
-            }
-        }
-
+        let (data, response) = try await fetchRendition(request: request)
         return data
+    }
+
+    private func fetchRendition(request: URLRequest, didRefreshToken: Bool = false) async throws -> (Data, URLResponse) {
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { return (data, response) }
+
+        switch http.statusCode {
+        case 200:
+            return (data, response)
+        case 202:
+            // Rendition is being generated — wait and retry
+            try await Task.sleep(for: .seconds(2))
+            return try await fetchRendition(request: request, didRefreshToken: didRefreshToken)
+        case 401 where !didRefreshToken:
+            let newToken = try await AdobeAuthManager.shared.refreshAccessToken()
+            var retryRequest = request
+            retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+            return try await fetchRendition(request: retryRequest, didRefreshToken: true)
+        case 404:
+            throw LightroomError.renditionNotFound
+        default:
+            logHTTPFailure(response: http, data: data, context: "downloadRendition")
+            throw LightroomError.downloadFailed
+        }
     }
 
     private func authenticatedRequest(path: String) async throws -> Data {
@@ -163,12 +172,14 @@ actor LightroomAPIClient {
 enum LightroomError: Error, LocalizedError {
     case apiError(Int)
     case downloadFailed
+    case renditionNotFound
     case noCatalog
 
     var errorDescription: String? {
         switch self {
         case .apiError(let code): "Lightroom API error (HTTP \(code))"
         case .downloadFailed: "Failed to download rendition"
+        case .renditionNotFound: "Rendition size not available"
         case .noCatalog: "No Lightroom catalog found"
         }
     }
