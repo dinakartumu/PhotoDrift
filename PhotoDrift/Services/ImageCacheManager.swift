@@ -1,6 +1,12 @@
 import Foundation
+import CryptoKit
 
 actor ImageCacheManager {
+
+    static func cacheKey(for id: String) -> String {
+        let hash = SHA256.hash(data: Data(id.utf8))
+        return hash.prefix(16).map { String(format: "%02x", $0) }.joined() + ".jpg"
+    }
     static let shared = ImageCacheManager()
 
     private let maxBytes: UInt64 = 500 * 1024 * 1024 // 500 MB
@@ -47,6 +53,21 @@ actor ImageCacheManager {
             guard totalSize > maxBytes else { break }
             try fm.removeItem(at: file.url)
             totalSize -= file.size
+        }
+    }
+
+    func remove(forKey key: String) {
+        let fileURL = cacheDirectory.appendingPathComponent(key)
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    func removeStaleEntries(validKeys: Set<String>) {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil) else { return }
+        for url in contents {
+            if !validKeys.contains(url.lastPathComponent) {
+                try? fm.removeItem(at: url)
+            }
         }
     }
 

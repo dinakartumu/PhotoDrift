@@ -398,8 +398,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let album = try? context.fetch(descriptor).first else { return }
         album.isSelected = isSelected
         if !isSelected {
+            let assetIDs = album.assets.map(\.id)
             for asset in album.assets {
                 context.delete(asset)
+            }
+            Task {
+                for id in assetIDs {
+                    await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
+                }
             }
         }
         try? context.save()
@@ -436,13 +442,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected }
         )
         guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
+        var assetIDs: [String] = []
         for album in albums {
             album.isSelected = false
             for asset in album.assets {
+                assetIDs.append(asset.id)
                 context.delete(asset)
             }
         }
         try? context.save()
+        Task {
+            for id in assetIDs {
+                await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
+            }
+        }
     }
 
     @objc private func albumToggled(_ sender: NSMenuItem) {

@@ -44,7 +44,20 @@ final class ShuffleEngine {
         isRunning = true
         scheduleNext()
         startObservers()
+        cleanStaleCacheEntries()
         postStateChange()
+    }
+
+    private func cleanStaleCacheEntries() {
+        Task {
+            do {
+                let pool = try await unifiedPool.buildPool()
+                let validKeys = Set(pool.map { ImageCacheManager.cacheKey(for: $0.id) })
+                await ImageCacheManager.shared.removeStaleEntries(validKeys: validKeys)
+            } catch {
+                // Non-critical — stale entries will be evicted by LRU
+            }
+        }
     }
 
     func stop() {
@@ -145,7 +158,7 @@ final class ShuffleEngine {
 
         do {
             // Check cache first
-            let key = "\(pick.id.hashValue).jpg"
+            let key = ImageCacheManager.cacheKey(for: pick.id)
             if let cached = await ImageCacheManager.shared.retrieve(forKey: key) {
                 try WallpaperService.setWallpaper(from: cached, scaling: scaling)
                 addToHistory(pick.id)
@@ -185,7 +198,7 @@ final class ShuffleEngine {
             if let fallback = photosOnly.randomElement() {
                 do {
                     let data = try await PhotoKitConnector.shared.requestImage(assetID: fallback.id)
-                    let key = "\(fallback.id.hashValue).jpg"
+                    let key = ImageCacheManager.cacheKey(for: fallback.id)
                     let url = try await ImageCacheManager.shared.store(data: data, forKey: key)
                     try WallpaperService.setWallpaper(from: url, scaling: scaling)
                     addToHistory(fallback.id)
@@ -224,7 +237,7 @@ final class ShuffleEngine {
                 .prefix(3)
 
             for candidate in candidates {
-                let key = "\(candidate.id.hashValue).jpg"
+                let key = ImageCacheManager.cacheKey(for: candidate.id)
                 let cached = await ImageCacheManager.shared.retrieve(forKey: key)
                 if cached != nil { continue }
 
