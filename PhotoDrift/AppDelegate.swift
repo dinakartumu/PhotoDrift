@@ -211,6 +211,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func connectApplePhotos() {
+        Task {
+            let status = await PhotoKitConnector.shared.requestAuthorization()
+
+            if status == .denied || status == .restricted {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Photos Access Required"
+                    alert.informativeText = "PhotoDrift needs access to your Photos library. Please enable it in System Settings > Privacy & Security > Photos."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "Open System Settings")
+                    alert.addButton(withTitle: "Cancel")
+                    NSApp.activate(ignoringOtherApps: true)
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos")!)
+                    }
+                }
+                return
+            }
+
+            guard status == .authorized || status == .limited else { return }
+
+            let infos = await PhotoKitConnector.shared.fetchAlbums()
+            await MainActor.run {
+                let context = ModelContext(modelContainer)
+                let settings = AppSettings.current(in: context)
+                settings.photosEnabled = true
+
+                let descriptor = FetchDescriptor<Album>(
+                    predicate: #Predicate { $0.sourceTypeRaw == "applePhotos" }
+                )
+                let existing = (try? context.fetch(descriptor)) ?? []
+                let fetchedIDs = Set(infos.map(\.id))
+
+                for album in existing where !fetchedIDs.contains(album.id) {
+                    context.delete(album)
+                }
+                for info in infos {
+                    if let match = existing.first(where: { $0.id == info.id }) {
+                        match.name = info.name
+                        match.assetCount = info.assetCount
+                    } else {
+                        let album = Album(id: info.id, name: info.name, sourceType: .applePhotos, assetCount: info.assetCount)
+                        context.insert(album)
+                    }
+                }
+
+                try? context.save()
+            }
+        }
+    }
+
     // MARK: - Display Submenu
 
     private func buildDisplaySubmenu(_ menu: NSMenu) {
@@ -284,14 +336,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for album in albums {
                 menu.addItem(makeAlbumCheckboxItem(title: album.name, albumID: album.id, isSelected: album.isSelected))
             }
-        case .denied, .restricted:
-            let item = NSMenuItem(title: "Access Denied — Check Settings", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
         default:
-            let item = NSMenuItem(title: "Grant Access in Settings", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+            let connect = NSMenuItem(title: "Connect Apple Photos…", action: #selector(connectApplePhotos), keyEquivalent: "")
+            connect.target = self
+            menu.addItem(connect)
         }
     }
 
