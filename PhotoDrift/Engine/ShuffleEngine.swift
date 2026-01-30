@@ -7,6 +7,8 @@ import Photos
 extension Notification.Name {
     static let shuffleEngineStateChanged = Notification.Name("shuffleEngineStateChanged")
     static let lightroomAuthStateChanged = Notification.Name("lightroomAuthStateChanged")
+    static let globalHotkeyTriggered = Notification.Name("globalHotkeyTriggered")
+    static let shuffleHotkeyChanged = Notification.Name("shuffleHotkeyChanged")
 }
 
 final class ShuffleEngine {
