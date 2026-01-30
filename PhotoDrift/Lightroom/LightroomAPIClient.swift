@@ -16,14 +16,19 @@ actor LightroomAPIClient {
 
     func getAlbums(catalogID: String) async throws -> [LRAlbumsResponse.LRAlbumResource] {
         var allAlbums: [LRAlbumsResponse.LRAlbumResource] = []
-        var nextPath: String? = "catalogs/\(catalogID)/albums"
+        let catalogPrefix = "catalogs/\(catalogID)/"
+        var nextPath: String? = "\(catalogPrefix)albums"
         while let path = nextPath {
             let data = try await authenticatedRequest(path: path)
             let response = try decode(LRAlbumsResponse.self, from: data, context: "albums")
             if let resources = response.resources, !resources.isEmpty {
                 allAlbums.append(contentsOf: resources)
             }
-            nextPath = response.links?.next?.href
+            if let href = response.links?.next?.href {
+                nextPath = href.hasPrefix(catalogPrefix) ? href : catalogPrefix + href
+            } else {
+                nextPath = nil
+            }
         }
 
         return allAlbums
@@ -31,14 +36,20 @@ actor LightroomAPIClient {
 
     func getAlbumAssets(catalogID: String, albumID: String) async throws -> [LRAlbumAssetsResponse.LRAssetResource] {
         var allAssets: [LRAlbumAssetsResponse.LRAssetResource] = []
-        var nextPath: String? = "catalogs/\(catalogID)/albums/\(albumID)/assets?limit=500"
+        let catalogPrefix = "catalogs/\(catalogID)/"
+        var nextPath: String? = "\(catalogPrefix)albums/\(albumID)/assets?limit=500"
         while let path = nextPath {
             let data = try await authenticatedRequest(path: path)
             let response = try decode(LRAlbumAssetsResponse.self, from: data, context: "album-assets")
             if let resources = response.resources, !resources.isEmpty {
                 allAssets.append(contentsOf: resources)
             }
-            nextPath = response.links?.next?.href
+            if let href = response.links?.next?.href {
+                // API returns next links relative to catalog — ensure catalog prefix is present
+                nextPath = href.hasPrefix(catalogPrefix) ? href : catalogPrefix + href
+            } else {
+                nextPath = nil
+            }
         }
 
         return allAssets

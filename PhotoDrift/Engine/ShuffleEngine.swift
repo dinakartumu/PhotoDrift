@@ -3,13 +3,16 @@ import Combine
 import SwiftData
 import AppKit
 
-@Observable
+extension Notification.Name {
+    static let shuffleEngineStateChanged = Notification.Name("shuffleEngineStateChanged")
+}
+
 final class ShuffleEngine {
-    var isRunning = false
-    var lastShuffleDate: Date?
-    var nextShuffleDate: Date?
-    var currentSource: String?
-    var statusMessage: String?
+    private(set) var isRunning = false
+    private(set) var lastShuffleDate: Date?
+    private(set) var nextShuffleDate: Date?
+    private(set) var currentSource: String?
+    private(set) var statusMessage: String?
 
     private var timerCancellable: AnyCancellable?
     private var observerCancellable: AnyCancellable?
@@ -35,6 +38,7 @@ final class ShuffleEngine {
         isRunning = true
         scheduleNext()
         startObservers()
+        postStateChange()
     }
 
     func stop() {
@@ -43,6 +47,7 @@ final class ShuffleEngine {
         timerCancellable = nil
         nextShuffleDate = nil
         stopObservers()
+        postStateChange()
     }
 
     func shuffleNow() async {
@@ -108,11 +113,13 @@ final class ShuffleEngine {
             pool = try await unifiedPool.buildPool()
         } catch {
             statusMessage = "Error loading albums: \(error.localizedDescription)"
+            postStateChange()
             return
         }
 
         guard !pool.isEmpty else {
             statusMessage = "No photos available"
+            postStateChange()
             return
         }
 
@@ -122,6 +129,7 @@ final class ShuffleEngine {
         guard let pick = available.randomElement() else { return }
 
         statusMessage = "Fetching photo..."
+        postStateChange()
 
         do {
             // Check cache first
@@ -132,6 +140,7 @@ final class ShuffleEngine {
                 lastShuffleDate = Date()
                 currentSource = pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
                 statusMessage = nil
+                postStateChange()
                 prefetchInBackground(pool: pool)
                 return
             }
@@ -153,9 +162,11 @@ final class ShuffleEngine {
             lastShuffleDate = Date()
             statusMessage = nil
 
+            postStateChange()
             prefetchInBackground(pool: pool)
         } catch let error as AdobeAuthError where error == .noRefreshToken {
             statusMessage = "Lightroom: please sign in again"
+            postStateChange()
         } catch is URLError {
             // Network offline — try Photos-only fallback
             let photosOnly = pool.filter { $0.sourceType == .applePhotos }
@@ -175,9 +186,15 @@ final class ShuffleEngine {
             } else {
                 statusMessage = "Network offline"
             }
+            postStateChange()
         } catch {
             statusMessage = "Error: \(error.localizedDescription)"
+            postStateChange()
         }
+    }
+
+    private func postStateChange() {
+        NotificationCenter.default.post(name: .shuffleEngineStateChanged, object: self)
     }
 
     private func addToHistory(_ id: String) {
