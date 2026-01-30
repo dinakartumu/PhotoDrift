@@ -34,6 +34,10 @@ final class ShuffleEngine {
         return AppSettings.current(in: context).shuffleIntervalMinutes
     }
 
+    func syncAssets(forAlbumID albumID: String) async {
+        await unifiedPool.syncAssets(forAlbumID: albumID)
+    }
+
     func start() {
         guard !isRunning else { return }
         isRunning = true

@@ -237,12 +237,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 menu.addItem(empty)
                 return
             }
+            let allSelected = albums.allSatisfy(\.isSelected)
+            let noneSelected = !albums.contains(where: \.isSelected)
+            let selectAll = NSMenuItem(title: "Select All", action: #selector(selectAllAlbums(_:)), keyEquivalent: "")
+            selectAll.target = self
+            selectAll.representedObject = SourceType.applePhotos.rawValue
+            selectAll.isEnabled = !allSelected
+            menu.addItem(selectAll)
+            let deselectAll = NSMenuItem(title: "Deselect All", action: #selector(deselectAllAlbums(_:)), keyEquivalent: "")
+            deselectAll.target = self
+            deselectAll.representedObject = SourceType.applePhotos.rawValue
+            deselectAll.isEnabled = !noneSelected
+            menu.addItem(deselectAll)
+            menu.addItem(.separator())
             for album in albums {
-                let item = NSMenuItem(title: album.name, action: #selector(albumToggled(_:)), keyEquivalent: "")
-                item.target = self
-                item.state = album.isSelected ? .on : .off
-                item.representedObject = album.id
-                menu.addItem(item)
+                menu.addItem(makeAlbumCheckboxItem(title: album.name, albumID: album.id, isSelected: album.isSelected))
             }
         case .denied, .restricted:
             let item = NSMenuItem(title: "Access Denied — Check Settings", action: nil, keyEquivalent: "")
@@ -274,13 +283,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(empty)
             return
         }
+        let allSelected = albums.allSatisfy(\.isSelected)
+        let noneSelected = !albums.contains(where: \.isSelected)
+        let selectAll = NSMenuItem(title: "Select All", action: #selector(selectAllAlbums(_:)), keyEquivalent: "")
+        selectAll.target = self
+        selectAll.representedObject = SourceType.lightroomCloud.rawValue
+        selectAll.isEnabled = !allSelected
+        menu.addItem(selectAll)
+        let deselectAll = NSMenuItem(title: "Deselect All", action: #selector(deselectAllAlbums(_:)), keyEquivalent: "")
+        deselectAll.target = self
+        deselectAll.representedObject = SourceType.lightroomCloud.rawValue
+        deselectAll.isEnabled = !noneSelected
+        menu.addItem(deselectAll)
+        menu.addItem(.separator())
         for album in albums {
-            let item = NSMenuItem(title: album.name, action: #selector(albumToggled(_:)), keyEquivalent: "")
-            item.target = self
-            item.state = album.isSelected ? .on : .off
-            item.representedObject = album.id
-            menu.addItem(item)
+            menu.addItem(makeAlbumCheckboxItem(title: album.name, albumID: album.id, isSelected: album.isSelected))
         }
+    }
+
+    private func makeAlbumCheckboxItem(title: String, albumID: String, isSelected: Bool) -> NSMenuItem {
+        let item = NSMenuItem()
+        let view = CheckmarkMenuItemView(title: title, albumID: albumID, isChecked: isSelected)
+        view.onToggle = { [weak self] albumID, isSelected in
+            self?.handleAlbumToggle(albumID: albumID, isSelected: isSelected)
+        }
+        item.view = view
+        return item
+    }
+
+    private func handleAlbumToggle(albumID: String, isSelected: Bool) {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.id == albumID }
+        )
+        guard let album = try? context.fetch(descriptor).first else { return }
+        album.isSelected = isSelected
+        if !isSelected {
+            for asset in album.assets {
+                context.delete(asset)
+            }
+        }
+        try? context.save()
+        if isSelected {
+            Task {
+                await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+            }
+        }
+    }
+
+    @objc private func selectAllAlbums(_ sender: NSMenuItem) {
+        guard let sourceRaw = sender.representedObject as? String else { return }
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && !$0.isSelected }
+        )
+        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
+        let albumIDs = albums.map(\.id)
+        for album in albums {
+            album.isSelected = true
+        }
+        try? context.save()
+        Task {
+            for id in albumIDs {
+                await self.shuffleEngine.syncAssets(forAlbumID: id)
+            }
+        }
+    }
+
+    @objc private func deselectAllAlbums(_ sender: NSMenuItem) {
+        guard let sourceRaw = sender.representedObject as? String else { return }
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected }
+        )
+        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
+        for album in albums {
+            album.isSelected = false
+            for asset in album.assets {
+                context.delete(asset)
+            }
+        }
+        try? context.save()
     }
 
     @objc private func albumToggled(_ sender: NSMenuItem) {
@@ -291,8 +374,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         guard let album = try? context.fetch(descriptor).first else { return }
         album.isSelected.toggle()
+        let nowSelected = album.isSelected
+
+        if !nowSelected {
+            for asset in album.assets {
+                context.delete(asset)
+            }
+        }
+
         try? context.save()
-        sender.state = album.isSelected ? .on : .off
+        sender.state = nowSelected ? .on : .off
+
+        if nowSelected {
+            Task {
+                await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+            }
+        }
     }
 
     #if DEBUG
@@ -387,5 +484,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ) { [weak self] _ in
             self?.shuffleEngine.handleWake()
         }
+    }
+}
+
+// MARK: - Checkmark Menu Item View
+
+private class CheckmarkMenuItemView: NSView {
+    let albumID: String
+    private(set) var isChecked: Bool
+    var onToggle: ((String, Bool) -> Void)?
+    private let checkLabel: NSTextField
+    private let titleLabel: NSTextField
+    private var trackingArea: NSTrackingArea?
+
+    init(title: String, albumID: String, isChecked: Bool) {
+        self.albumID = albumID
+        self.isChecked = isChecked
+
+        let font = NSFont.menuFont(ofSize: 0)
+        checkLabel = NSTextField(labelWithString: "✓")
+        checkLabel.font = font
+        checkLabel.isHidden = !isChecked
+
+        titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = font
+
+        super.init(frame: .zero)
+        wantsLayer = true
+
+        addSubview(checkLabel)
+        addSubview(titleLabel)
+
+        let height: CGFloat = 22
+        checkLabel.sizeToFit()
+        titleLabel.sizeToFit()
+        checkLabel.frame.origin = NSPoint(x: 6, y: (height - checkLabel.frame.height) / 2)
+        titleLabel.frame.origin = NSPoint(x: 24, y: (height - titleLabel.frame.height) / 2)
+        frame = NSRect(x: 0, y: 0, width: titleLabel.frame.maxX + 14, height: height)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingArea { removeTrackingArea(t) }
+        let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self, userInfo: nil)
+        addTrackingArea(t)
+        trackingArea = t
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.selectedContentBackgroundColor.cgColor
+        titleLabel.textColor = .white
+        checkLabel.textColor = .white
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = nil
+        titleLabel.textColor = .labelColor
+        checkLabel.textColor = .labelColor
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isChecked.toggle()
+        checkLabel.isHidden = !isChecked
+        onToggle?(albumID, isChecked)
     }
 }
