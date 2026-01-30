@@ -28,6 +28,8 @@ final class AppSettings {
     var adobeRefreshToken: String?
     var adobeTokenExpiry: Date?
     var wallpaperScalingRaw: String = WallpaperScaling.fitToScreen.rawValue
+    var shuffleHotkeyKeyCode: Int = -1
+    var shuffleHotkeyModifiers: Int = 0
 
     @Transient
     var wallpaperScaling: WallpaperScaling {

@@ -9,7 +9,7 @@ final class SettingsWindowController: NSWindowController {
         let window = NSWindow(contentViewController: vc)
         window.title = "Settings"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 380, height: 420))
+        window.setContentSize(NSSize(width: 380, height: 470))
         window.center()
         self.init(window: window)
     }
@@ -37,6 +37,7 @@ final class SettingsViewController: NSViewController {
     private var photosCheckbox: NSButton!
     private var lightroomCheckbox: NSButton!
     private var launchAtLoginCheckbox: NSButton!
+    private var shortcutRecorder: ShortcutRecorderView!
 
     // Photos connection controls
     private var photosStatusLabel: NSTextField!
@@ -146,6 +147,31 @@ final class SettingsViewController: NSViewController {
         launchAtLoginCheckbox.state = isLoginEnabled ? .on : .off
         root.addArrangedSubview(launchAtLoginCheckbox)
 
+        // Shuffle Hotkey
+        let hotkeyRow = NSStackView()
+        hotkeyRow.orientation = .horizontal
+        hotkeyRow.alignment = .centerY
+        hotkeyRow.spacing = 8
+
+        let hotkeyLabel = NSTextField(labelWithString: "Shuffle Hotkey:")
+        hotkeyLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+        hotkeyRow.addArrangedSubview(hotkeyLabel)
+
+        shortcutRecorder = ShortcutRecorderView(frame: NSRect(x: 0, y: 0, width: 180, height: 24))
+        shortcutRecorder.configure(
+            keyCode: settings.shuffleHotkeyKeyCode,
+            carbonModifiers: UInt32(settings.shuffleHotkeyModifiers)
+        )
+        shortcutRecorder.onChange = { [weak self] keyCode, carbonModifiers in
+            self?.hotkeyChanged(keyCode: keyCode, carbonModifiers: carbonModifiers)
+        }
+        shortcutRecorder.translatesAutoresizingMaskIntoConstraints = false
+        shortcutRecorder.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        shortcutRecorder.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        hotkeyRow.addArrangedSubview(shortcutRecorder)
+
+        root.addArrangedSubview(hotkeyRow)
+
         self.view = root
 
         refreshConnectionStatus()
@@ -221,6 +247,13 @@ final class SettingsViewController: NSViewController {
     @objc private func lightroomToggled(_ sender: NSButton) {
         settings.lightroomEnabled = sender.state == .on
         save()
+    }
+
+    private func hotkeyChanged(keyCode: Int, carbonModifiers: UInt32) {
+        settings.shuffleHotkeyKeyCode = keyCode
+        settings.shuffleHotkeyModifiers = Int(carbonModifiers)
+        save()
+        NotificationCenter.default.post(name: .shuffleHotkeyChanged, object: nil)
     }
 
     @objc private func launchAtLoginToggled(_ sender: NSButton) {
