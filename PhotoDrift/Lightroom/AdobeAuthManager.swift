@@ -154,16 +154,10 @@ actor AdobeAuthManager {
         return try await refreshAccessToken()
     }
 
-    func loadTokens(from settings: AppSettings) {
-        self.accessToken = settings.adobeAccessToken
-        self.refreshToken = settings.adobeRefreshToken
-        self.tokenExpiry = settings.adobeTokenExpiry
-    }
-
-    func saveTokens(to settings: AppSettings) {
-        settings.adobeAccessToken = accessToken
-        settings.adobeRefreshToken = refreshToken
-        settings.adobeTokenExpiry = tokenExpiry
+    func loadTokens(accessToken: String?, refreshToken: String?, tokenExpiry: Date?) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.tokenExpiry = tokenExpiry
     }
 
     func signOut() {
@@ -173,7 +167,7 @@ actor AdobeAuthManager {
     }
 
     var isSignedIn: Bool {
-        refreshToken != nil
+        accessToken != nil
     }
 
     private func clearSession() {

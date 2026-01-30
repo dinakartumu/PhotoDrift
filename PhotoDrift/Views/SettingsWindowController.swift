@@ -1,6 +1,7 @@
 import AppKit
 import SwiftData
 import ServiceManagement
+import Photos
 
 final class SettingsWindowController: NSWindowController {
     convenience init(modelContainer: ModelContainer) {
@@ -8,13 +9,14 @@ final class SettingsWindowController: NSWindowController {
         let window = NSWindow(contentViewController: vc)
         window.title = "Settings"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 380, height: 340))
+        window.setContentSize(NSSize(width: 380, height: 420))
         window.center()
         self.init(window: window)
     }
 
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
+        (contentViewController as? SettingsViewController)?.refreshConnectionStatus()
         window?.center()
     }
 }
@@ -34,8 +36,16 @@ final class SettingsViewController: NSViewController {
     private var radioButtons: [NSButton] = []
     private var photosCheckbox: NSButton!
     private var lightroomCheckbox: NSButton!
-    private var adobeStatusLabel: NSTextField!
     private var launchAtLoginCheckbox: NSButton!
+
+    // Photos connection controls
+    private var photosStatusLabel: NSTextField!
+    private var photosGrantButton: NSButton!
+
+    // Lightroom connection controls
+    private var lightroomStatusLabel: NSTextField!
+    private var lightroomSignInButton: NSButton!
+    private var lightroomSignOutButton: NSButton!
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -77,19 +87,56 @@ final class SettingsViewController: NSViewController {
         // --- Sources ---
         root.addArrangedSubview(makeSectionLabel("Sources"))
 
+        // Apple Photos
         photosCheckbox = NSButton(checkboxWithTitle: "Apple Photos", target: self, action: #selector(photosToggled(_:)))
         photosCheckbox.state = settings.photosEnabled ? .on : .off
         root.addArrangedSubview(photosCheckbox)
 
+        let photosRow = NSStackView()
+        photosRow.orientation = .horizontal
+        photosRow.spacing = 8
+
+        photosStatusLabel = NSTextField(labelWithString: "")
+        photosStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        photosRow.addArrangedSubview(photosStatusLabel)
+
+        photosGrantButton = NSButton(title: "Grant Photos Access", target: self, action: #selector(grantPhotosAccess))
+        photosGrantButton.bezelStyle = .rounded
+        photosGrantButton.controlSize = .small
+        photosGrantButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        photosGrantButton.isHidden = true
+        photosRow.addArrangedSubview(photosGrantButton)
+
+        root.addArrangedSubview(photosRow)
+
+        // Adobe Lightroom
         lightroomCheckbox = NSButton(checkboxWithTitle: "Adobe Lightroom", target: self, action: #selector(lightroomToggled(_:)))
         lightroomCheckbox.state = settings.lightroomEnabled ? .on : .off
         root.addArrangedSubview(lightroomCheckbox)
 
-        adobeStatusLabel = NSTextField(labelWithString: "")
-        adobeStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        adobeStatusLabel.textColor = .secondaryLabelColor
-        root.addArrangedSubview(adobeStatusLabel)
-        updateAdobeStatus()
+        let lrRow = NSStackView()
+        lrRow.orientation = .horizontal
+        lrRow.spacing = 8
+
+        lightroomStatusLabel = NSTextField(labelWithString: "")
+        lightroomStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        lrRow.addArrangedSubview(lightroomStatusLabel)
+
+        lightroomSignInButton = NSButton(title: "Sign in to Adobe Lightroom", target: self, action: #selector(signInToLightroom))
+        lightroomSignInButton.bezelStyle = .rounded
+        lightroomSignInButton.controlSize = .small
+        lightroomSignInButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        lightroomSignInButton.isHidden = true
+        lrRow.addArrangedSubview(lightroomSignInButton)
+
+        lightroomSignOutButton = NSButton(title: "Sign Out", target: self, action: #selector(signOutOfLightroom))
+        lightroomSignOutButton.bezelStyle = .rounded
+        lightroomSignOutButton.controlSize = .small
+        lightroomSignOutButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        lightroomSignOutButton.isHidden = true
+        lrRow.addArrangedSubview(lightroomSignOutButton)
+
+        root.addArrangedSubview(lrRow)
 
         // --- General ---
         root.addArrangedSubview(makeSectionLabel("General"))
@@ -100,6 +147,18 @@ final class SettingsViewController: NSViewController {
         root.addArrangedSubview(launchAtLoginCheckbox)
 
         self.view = root
+
+        refreshConnectionStatus()
+    }
+
+    func refreshConnectionStatus() {
+        updatePhotosStatus()
+        Task {
+            let signedIn = await AdobeAuthManager.shared.isSignedIn
+            await MainActor.run {
+                applyLightroomUI(signedIn: signedIn)
+            }
+        }
     }
 
     private func makeSectionLabel(_ title: String) -> NSTextField {
@@ -108,18 +167,37 @@ final class SettingsViewController: NSViewController {
         return label
     }
 
-    private func updateAdobeStatus() {
-        if settings.lightroomEnabled {
-            if settings.adobeAccessToken != nil {
-                adobeStatusLabel.stringValue = "✓ Connected to Adobe"
-                adobeStatusLabel.textColor = .systemGreen
-            } else {
-                adobeStatusLabel.stringValue = "Sign in via Choose Albums > Lightroom tab"
-                adobeStatusLabel.textColor = .secondaryLabelColor
-            }
-            adobeStatusLabel.isHidden = false
+    // MARK: - Photos Status
+
+    private func updatePhotosStatus() {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        photosGrantButton.isHidden = true
+
+        switch status {
+        case .authorized, .limited:
+            photosStatusLabel.stringValue = "\u{2713} Authorized"
+            photosStatusLabel.textColor = .systemGreen
+        case .denied, .restricted:
+            photosStatusLabel.stringValue = "Access Denied"
+            photosStatusLabel.textColor = .systemRed
+        default:
+            photosStatusLabel.stringValue = ""
+            photosGrantButton.isHidden = false
+        }
+    }
+
+    // MARK: - Lightroom Status
+
+    private func applyLightroomUI(signedIn: Bool) {
+        if signedIn {
+            lightroomStatusLabel.stringValue = "\u{2713} Connected"
+            lightroomStatusLabel.textColor = .systemGreen
+            lightroomSignInButton.isHidden = true
+            lightroomSignOutButton.isHidden = false
         } else {
-            adobeStatusLabel.isHidden = true
+            lightroomStatusLabel.stringValue = ""
+            lightroomSignInButton.isHidden = false
+            lightroomSignOutButton.isHidden = true
         }
     }
 
@@ -145,7 +223,6 @@ final class SettingsViewController: NSViewController {
 
     @objc private func lightroomToggled(_ sender: NSButton) {
         settings.lightroomEnabled = sender.state == .on
-        updateAdobeStatus()
         save()
     }
 
@@ -159,6 +236,133 @@ final class SettingsViewController: NSViewController {
             }
         } catch {
             sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        }
+    }
+
+    @objc private func grantPhotosAccess() {
+        photosGrantButton.isEnabled = false
+        Task {
+            let status = await PhotoKitConnector.shared.requestAuthorization()
+            await MainActor.run {
+                photosGrantButton.isEnabled = true
+                updatePhotosStatus()
+                if status == .authorized || status == .limited {
+                    syncPhotosAlbums()
+                }
+            }
+        }
+    }
+
+    @objc private func signInToLightroom() {
+        guard let window = view.window else { return }
+        lightroomSignInButton.isEnabled = false
+
+        Task {
+            do {
+                _ = try await AdobeAuthManager.shared.signIn(from: window)
+                await MainActor.run {
+                    lightroomSignInButton.isEnabled = true
+                    applyLightroomUI(signedIn: true)
+                    NotificationCenter.default.post(name: .lightroomAuthStateChanged, object: nil)
+                    syncLightroomAlbums()
+                }
+            } catch {
+                await MainActor.run {
+                    lightroomSignInButton.isEnabled = true
+                }
+            }
+        }
+    }
+
+    @objc private func signOutOfLightroom() {
+        Task {
+            await AdobeAuthManager.shared.signOut()
+            await MainActor.run {
+                let context = ModelContext(modelContainer)
+                let currentSettings = AppSettings.current(in: context)
+                currentSettings.adobeAccessToken = nil
+                currentSettings.adobeRefreshToken = nil
+                currentSettings.adobeTokenExpiry = nil
+                currentSettings.lightroomEnabled = false
+
+                let descriptor = FetchDescriptor<Album>(
+                    predicate: #Predicate { $0.sourceTypeRaw == "lightroomCloud" }
+                )
+                if let albums = try? context.fetch(descriptor) {
+                    for album in albums { context.delete(album) }
+                }
+                try? context.save()
+
+                settings = currentSettings
+                lightroomCheckbox.state = .off
+                applyLightroomUI(signedIn: false)
+                NotificationCenter.default.post(name: .lightroomAuthStateChanged, object: nil)
+            }
+        }
+    }
+
+    // MARK: - Album Sync
+
+    private func syncPhotosAlbums() {
+        Task {
+            let infos = await PhotoKitConnector.shared.fetchAlbums()
+            await MainActor.run {
+                let context = ModelContext(modelContainer)
+                let descriptor = FetchDescriptor<Album>(
+                    predicate: #Predicate { $0.sourceTypeRaw == "applePhotos" }
+                )
+                let existing = (try? context.fetch(descriptor)) ?? []
+                let fetchedIDs = Set(infos.map(\.id))
+
+                for album in existing where !fetchedIDs.contains(album.id) {
+                    context.delete(album)
+                }
+
+                for info in infos {
+                    if let match = existing.first(where: { $0.id == info.id }) {
+                        match.name = info.name
+                        match.assetCount = info.assetCount
+                    } else {
+                        let album = Album(id: info.id, name: info.name, sourceType: .applePhotos, assetCount: info.assetCount)
+                        context.insert(album)
+                    }
+                }
+
+                try? context.save()
+            }
+        }
+    }
+
+    private func syncLightroomAlbums() {
+        Task {
+            do {
+                let infos = try await LightroomConnector.shared.fetchAlbums()
+                await MainActor.run {
+                    let context = ModelContext(modelContainer)
+                    let descriptor = FetchDescriptor<Album>(
+                        predicate: #Predicate { $0.sourceTypeRaw == "lightroomCloud" }
+                    )
+                    let existing = (try? context.fetch(descriptor)) ?? []
+                    let fetchedIDs = Set(infos.map(\.id))
+
+                    for album in existing where !fetchedIDs.contains(album.id) {
+                        context.delete(album)
+                    }
+
+                    for info in infos {
+                        if let match = existing.first(where: { $0.id == info.id }) {
+                            match.name = info.name
+                        } else {
+                            let album = Album(id: info.id, name: info.name, sourceType: .lightroomCloud)
+                            context.insert(album)
+                        }
+                    }
+
+                    try? context.save()
+                }
+            } catch {
+                // Lightroom album sync failed silently
+            }
         }
     }
 }
