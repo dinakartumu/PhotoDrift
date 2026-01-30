@@ -130,7 +130,7 @@ actor LightroomAPIClient {
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data, context: String) throws -> T {
         do {
-            let cleaned = stripJsonJunkPrefix(from: data)
+            let cleaned = LightroomAPIClient.stripJsonJunkPrefix(from: data)
             return try JSONDecoder().decode(T.self, from: cleaned)
         } catch {
             logDecodeFailure(data: data, context: context, error: error)
@@ -158,7 +158,7 @@ actor LightroomAPIClient {
         }
     }
 
-    private func stripJsonJunkPrefix(from data: Data) -> Data {
+    static func stripJsonJunkPrefix(from data: Data) -> Data {
         guard let text = String(data: data, encoding: .utf8) else { return data }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let prefix = "while (1) {}"
