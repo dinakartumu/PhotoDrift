@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftData
 import AppKit
+import Photos
 
 extension Notification.Name {
     static let shuffleEngineStateChanged = Notification.Name("shuffleEngineStateChanged")
@@ -63,14 +64,17 @@ final class ShuffleEngine {
     }
 
     private func startObservers() {
-        photoObserver.startObserving()
-        observerCancellable = photoObserver.debouncedChanges
-            .sink { [weak self] in
-                guard let self else { return }
-                Task {
-                    await self.unifiedPool.syncPhotosAlbums()
+        let photosStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if photosStatus == .authorized || photosStatus == .limited {
+            photoObserver.startObserving()
+            observerCancellable = photoObserver.debouncedChanges
+                .sink { [weak self] in
+                    guard let self else { return }
+                    Task {
+                        await self.unifiedPool.syncPhotosAlbums()
+                    }
                 }
-            }
+        }
 
         // Poll Lightroom every 15 minutes
         let context = ModelContext(modelContainer)

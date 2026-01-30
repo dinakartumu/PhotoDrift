@@ -177,9 +177,6 @@ final class SettingsViewController: NSViewController {
         case .authorized, .limited:
             photosStatusLabel.stringValue = "\u{2713} Authorized"
             photosStatusLabel.textColor = .systemGreen
-        case .denied, .restricted:
-            photosStatusLabel.stringValue = "Access Denied"
-            photosStatusLabel.textColor = .systemRed
         default:
             photosStatusLabel.stringValue = ""
             photosGrantButton.isHidden = false
@@ -248,6 +245,24 @@ final class SettingsViewController: NSViewController {
                 updatePhotosStatus()
                 if status == .authorized || status == .limited {
                     syncPhotosAlbums()
+                } else if status == .denied || status == .restricted {
+                    showPhotosDeniedAlert()
+                }
+            }
+        }
+    }
+
+    private func showPhotosDeniedAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Photos Access Required"
+        alert.informativeText = "PhotoDrift needs access to your Photos library. Please enable it in System Settings > Privacy & Security > Photos."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Cancel")
+        if let window = view.window {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos")!)
                 }
             }
         }
