@@ -32,7 +32,9 @@ enum WallpaperService {
         }
 
         for screen in NSScreen.screens {
-            try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: options)
+            var opts = options
+            opts[.fillColor] = NSColor.black
+            try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: opts)
         }
     }
 }
