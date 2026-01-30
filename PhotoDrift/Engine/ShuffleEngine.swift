@@ -5,6 +5,7 @@ import AppKit
 
 extension Notification.Name {
     static let shuffleEngineStateChanged = Notification.Name("shuffleEngineStateChanged")
+    static let lightroomAuthStateChanged = Notification.Name("lightroomAuthStateChanged")
 }
 
 final class ShuffleEngine {

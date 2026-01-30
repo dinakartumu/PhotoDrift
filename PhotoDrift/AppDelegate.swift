@@ -1,5 +1,6 @@
 import AppKit
 import SwiftData
+import Photos
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -7,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var shuffleEngine: ShuffleEngine!
     private var modelContainer: ModelContainer!
     private var settingsWC: SettingsWindowController?
-    private var albumPickerWC: AlbumPickerWindowController?
+    private var lightroomSignedIn = false
 
     static func main() {
         let app = NSApplication.shared
@@ -37,6 +38,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name: .shuffleEngineStateChanged,
             object: shuffleEngine
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(lightroomAuthChanged),
+            name: .lightroomAuthStateChanged,
+            object: nil
+        )
     }
 
     // MARK: - OAuth Callback
@@ -64,6 +72,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func engineStateChanged() {
         // Status item icon could be updated here if needed
+    }
+
+    @objc private func lightroomAuthChanged() {
+        Task {
+            let signedIn = await AdobeAuthManager.shared.isSignedIn
+            await MainActor.run { lightroomSignedIn = signedIn }
+        }
     }
 
     // MARK: - NSMenuDelegate
@@ -141,9 +156,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 8. Choose Albums
-        let albumsItem = NSMenuItem(title: "Choose Albums...", action: #selector(showAlbumPicker), keyEquivalent: "")
-        albumsItem.target = self
+        // 8. Choose Albums submenu
+        let albumsItem = NSMenuItem(title: "Choose Albums", action: nil, keyEquivalent: "")
+        let albumsSubmenu = NSMenu()
+        buildAlbumSubmenus(albumsSubmenu)
+        albumsItem.submenu = albumsSubmenu
         menu.addItem(albumsItem)
 
         // 9. Settings
@@ -187,12 +204,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func showAlbumPicker() {
-        if albumPickerWC == nil {
-            albumPickerWC = AlbumPickerWindowController(modelContainer: modelContainer)
+    // MARK: - Album Submenus
+
+    private func buildAlbumSubmenus(_ menu: NSMenu) {
+        // Apple Photos submenu
+        let photosItem = NSMenuItem(title: "Apple Photos", action: nil, keyEquivalent: "")
+        let photosSubmenu = NSMenu()
+        buildPhotosAlbumSubmenu(photosSubmenu)
+        photosItem.submenu = photosSubmenu
+        menu.addItem(photosItem)
+
+        // Lightroom submenu
+        let lrItem = NSMenuItem(title: "Lightroom", action: nil, keyEquivalent: "")
+        let lrSubmenu = NSMenu()
+        buildLightroomAlbumSubmenu(lrSubmenu)
+        lrItem.submenu = lrSubmenu
+        menu.addItem(lrItem)
+    }
+
+    private func buildPhotosAlbumSubmenu(_ menu: NSMenu) {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        switch status {
+        case .authorized, .limited:
+            let context = ModelContext(modelContainer)
+            let descriptor = FetchDescriptor<Album>(
+                predicate: #Predicate { $0.sourceTypeRaw == "applePhotos" },
+                sortBy: [SortDescriptor(\Album.name)]
+            )
+            guard let albums = try? context.fetch(descriptor), !albums.isEmpty else {
+                let empty = NSMenuItem(title: "No albums found", action: nil, keyEquivalent: "")
+                empty.isEnabled = false
+                menu.addItem(empty)
+                return
+            }
+            for album in albums {
+                let item = NSMenuItem(title: album.name, action: #selector(albumToggled(_:)), keyEquivalent: "")
+                item.target = self
+                item.state = album.isSelected ? .on : .off
+                item.representedObject = album.id
+                menu.addItem(item)
+            }
+        case .denied, .restricted:
+            let item = NSMenuItem(title: "Access Denied — Check Settings", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        default:
+            let item = NSMenuItem(title: "Grant Access in Settings", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
         }
-        albumPickerWC?.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func buildLightroomAlbumSubmenu(_ menu: NSMenu) {
+        guard lightroomSignedIn else {
+            let item = NSMenuItem(title: "Sign In in Settings", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            return
+        }
+
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.sourceTypeRaw == "lightroomCloud" },
+            sortBy: [SortDescriptor(\Album.name)]
+        )
+        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else {
+            let empty = NSMenuItem(title: "No albums found", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for album in albums {
+            let item = NSMenuItem(title: album.name, action: #selector(albumToggled(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = album.isSelected ? .on : .off
+            item.representedObject = album.id
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func albumToggled(_ sender: NSMenuItem) {
+        guard let albumID = sender.representedObject as? String else { return }
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.id == albumID }
+        )
+        guard let album = try? context.fetch(descriptor).first else { return }
+        album.isSelected.toggle()
+        try? context.save()
+        sender.state = album.isSelected ? .on : .off
     }
 
     #if DEBUG
@@ -255,9 +355,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func loadSavedTokens() {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
+        let accessToken = settings.adobeAccessToken
+        let refreshToken = settings.adobeRefreshToken
+        let tokenExpiry = settings.adobeTokenExpiry
+        lightroomSignedIn = accessToken != nil
         Task {
             await AdobeAuthManager.shared.configure(modelContainer: modelContainer)
-            await AdobeAuthManager.shared.loadTokens(from: settings)
+            await AdobeAuthManager.shared.loadTokens(
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                tokenExpiry: tokenExpiry
+            )
         }
     }
 
