@@ -19,8 +19,7 @@ final class ShuffleEngine {
     private var timerCancellable: AnyCancellable?
     private var observerCancellable: AnyCancellable?
     private var lightroomPollCancellable: AnyCancellable?
-    private var recentHistory: [String] = []
-    private let maxHistorySize = 20
+    private var selection = ShuffleSelection()
     private let modelContainer: ModelContainer
     private let unifiedPool: UnifiedPool
     private let photoObserver = PhotoLibraryObserver()
@@ -148,10 +147,7 @@ final class ShuffleEngine {
             return
         }
 
-        let candidates = pool.filter { !recentHistory.contains($0.id) }
-        let available = candidates.isEmpty ? pool : candidates
-
-        guard let pick = available.randomElement() else { return }
+        guard let pick = selection.select(from: pool) else { return }
 
         statusMessage = "Fetching photo..."
         postStateChange()
@@ -223,16 +219,13 @@ final class ShuffleEngine {
     }
 
     private func addToHistory(_ id: String) {
-        recentHistory.append(id)
-        if recentHistory.count > maxHistorySize {
-            recentHistory.removeFirst()
-        }
+        selection.addToHistory(id)
     }
 
     private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {
         Task.detached { [weak self] in
             guard let self else { return }
-            let candidates = pool.filter { !self.recentHistory.contains($0.id) }
+            let candidates = pool.filter { !self.selection.recentHistory.contains($0.id) }
                 .shuffled()
                 .prefix(3)
 

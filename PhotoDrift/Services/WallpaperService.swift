@@ -1,35 +1,38 @@
 import AppKit
 
 enum WallpaperService {
-    static func setWallpaper(from url: URL, scaling: WallpaperScaling = .fitToScreen) throws {
-        let options: [NSWorkspace.DesktopImageOptionKey: Any]
+    static func desktopImageOptions(for scaling: WallpaperScaling) -> [NSWorkspace.DesktopImageOptionKey: Any] {
         switch scaling {
         case .fillScreen:
-            options = [
+            return [
                 .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue,
                 .allowClipping: true,
             ]
         case .fitToScreen:
-            options = [
+            return [
                 .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue,
                 .allowClipping: false,
             ]
         case .stretchToFill:
-            options = [
+            return [
                 .imageScaling: NSImageScaling.scaleAxesIndependently.rawValue,
                 .allowClipping: true,
             ]
         case .center:
-            options = [
+            return [
                 .imageScaling: NSImageScaling.scaleNone.rawValue,
                 .allowClipping: false,
             ]
         case .tile:
-            options = [
+            return [
                 .imageScaling: NSImageScaling.scaleNone.rawValue,
                 .allowClipping: false,
             ]
         }
+    }
+
+    static func setWallpaper(from url: URL, scaling: WallpaperScaling = .fitToScreen) throws {
+        let options = desktopImageOptions(for: scaling)
 
         for screen in NSScreen.screens {
             var opts = options

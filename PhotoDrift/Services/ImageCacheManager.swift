@@ -9,12 +9,19 @@ actor ImageCacheManager {
     }
     static let shared = ImageCacheManager()
 
-    private let maxBytes: UInt64 = 500 * 1024 * 1024 // 500 MB
+    private let maxBytes: UInt64
     private let cacheDirectory: URL
 
     private init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         cacheDirectory = caches.appendingPathComponent("PhotoDriftImages", isDirectory: true)
+        maxBytes = 500 * 1024 * 1024 // 500 MB
+        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+    }
+
+    init(cacheDirectory: URL, maxBytes: UInt64 = 500 * 1024 * 1024) {
+        self.cacheDirectory = cacheDirectory
+        self.maxBytes = maxBytes
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
 
