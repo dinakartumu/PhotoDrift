@@ -163,7 +163,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         albumsItem.submenu = albumsSubmenu
         menu.addItem(albumsItem)
 
-        // 9. Settings
+        // 9. Display submenu
+        let displayItem = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
+        let displaySubmenu = NSMenu()
+        buildDisplaySubmenu(displaySubmenu)
+        displayItem.submenu = displaySubmenu
+        menu.addItem(displayItem)
+
+        // 10. Settings
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -202,6 +209,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         settingsWC?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Display Submenu
+
+    private func buildDisplaySubmenu(_ menu: NSMenu) {
+        let context = ModelContext(modelContainer)
+        let current = AppSettings.current(in: context).wallpaperScaling
+
+        for scaling in WallpaperScaling.allCases {
+            let item = NSMenuItem(title: scaling.displayName, action: #selector(scalingSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = scaling.rawValue
+            item.state = scaling == current ? .on : .off
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func scalingSelected(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let scaling = WallpaperScaling(rawValue: rawValue) else { return }
+        let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
+        settings.wallpaperScaling = scaling
+        try? context.save()
     }
 
     // MARK: - Album Submenus
@@ -422,7 +453,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 else { return }
 
                 let url = try await ImageCacheManager.shared.store(data: jpegData, forKey: "test_wallpaper.jpg")
-                try WallpaperService.setWallpaper(from: url)
+                let context = ModelContext(modelContainer)
+                let scaling = AppSettings.current(in: context).wallpaperScaling
+                try WallpaperService.setWallpaper(from: url, scaling: scaling)
             } catch {
                 // Debug only
             }
