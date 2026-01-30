@@ -14,45 +14,60 @@ actor UnifiedPool {
         let albumID: String
     }
 
+    func syncAssets(forAlbumID albumID: String) async {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.id == albumID }
+        )
+        guard let album = try? context.fetch(descriptor).first else { return }
+
+        let fetchedIDs: [String]
+        switch album.sourceType {
+        case .applePhotos:
+            fetchedIDs = await PhotoKitConnector.shared.fetchAssetIDs(albumID: albumID)
+        case .lightroomCloud:
+            do {
+                fetchedIDs = try await LightroomConnector.shared.fetchAssetIDs(albumID: albumID)
+            } catch {
+                return
+            }
+        }
+
+        let existingByID = Dictionary(uniqueKeysWithValues: album.assets.map { ($0.id, $0) })
+        let fetchedSet = Set(fetchedIDs)
+        let existingSet = Set(existingByID.keys)
+
+        // Delete removed assets
+        for id in existingSet.subtracting(fetchedSet) {
+            if let asset = existingByID[id] {
+                context.delete(asset)
+            }
+        }
+
+        // Insert new assets
+        for id in fetchedSet.subtracting(existingSet) {
+            let asset = Asset(id: id, sourceType: album.sourceType, album: album)
+            context.insert(asset)
+        }
+
+        album.assetCount = fetchedIDs.count
+        try? context.save()
+    }
+
     func buildPool() async throws -> [PoolEntry] {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
         var pool: [PoolEntry] = []
 
-        if settings.photosEnabled {
-            let photosRaw = SourceType.applePhotos.rawValue
-            let descriptor = FetchDescriptor<Album>(
-                predicate: #Predicate { $0.isSelected && $0.sourceTypeRaw == photosRaw }
-            )
-            let albums = try context.fetch(descriptor)
-            for album in albums {
-                let assetIDs = await PhotoKitConnector.shared.fetchAssetIDs(albumID: album.id)
-                pool.append(contentsOf: assetIDs.map {
-                    PoolEntry(id: $0, sourceType: .applePhotos, albumID: album.id)
-                })
-            }
-        }
-
-        if settings.lightroomEnabled {
-            let lrRaw = SourceType.lightroomCloud.rawValue
-            let descriptor = FetchDescriptor<Album>(
-                predicate: #Predicate { $0.isSelected && $0.sourceTypeRaw == lrRaw }
-            )
-            let albums = try context.fetch(descriptor)
-            for album in albums {
-                do {
-                    let assetIDs = try await LightroomConnector.shared.fetchAssetIDs(albumID: album.id)
-                    pool.append(contentsOf: assetIDs.map {
-                        PoolEntry(id: $0, sourceType: .lightroomCloud, albumID: album.id)
-                    })
-                    // Update asset count
-                    album.assetCount = assetIDs.count
-                } catch {
-                    // Skip album on error, use cached data if available
-                    for asset in album.assets {
-                        pool.append(PoolEntry(id: asset.id, sourceType: .lightroomCloud, albumID: album.id))
-                    }
-                }
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.isSelected }
+        )
+        let albums = try context.fetch(descriptor)
+        for album in albums {
+            let sourceEnabled = album.sourceType == .applePhotos ? settings.photosEnabled : settings.lightroomEnabled
+            guard sourceEnabled else { continue }
+            for asset in album.assets {
+                pool.append(PoolEntry(id: asset.id, sourceType: album.sourceType, albumID: album.id))
             }
         }
 
@@ -85,6 +100,12 @@ actor UnifiedPool {
         }
 
         try? context.save()
+
+        // Sync assets for selected albums
+        let selectedAlbums = existingAlbums.filter { $0.isSelected && fetchedIDs.contains($0.id) }
+        for album in selectedAlbums {
+            await syncAssets(forAlbumID: album.id)
+        }
     }
 
     func syncLightroomAlbums() async {
@@ -114,6 +135,12 @@ actor UnifiedPool {
             }
 
             try? context.save()
+
+            // Sync assets for selected albums
+            let selectedAlbums = existingAlbums.filter { $0.isSelected && fetchedIDs.contains($0.id) }
+            for album in selectedAlbums {
+                await syncAssets(forAlbumID: album.id)
+            }
         } catch {
             // Network error — keep cached data
         }
