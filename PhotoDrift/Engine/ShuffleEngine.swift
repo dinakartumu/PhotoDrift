@@ -113,6 +113,9 @@ final class ShuffleEngine {
 
     @MainActor
     private func performShuffle() async {
+        let context = ModelContext(modelContainer)
+        let scaling = AppSettings.current(in: context).wallpaperScaling
+
         let pool: [UnifiedPool.PoolEntry]
         do {
             pool = try await unifiedPool.buildPool()
@@ -140,7 +143,7 @@ final class ShuffleEngine {
             // Check cache first
             let key = "\(pick.id.hashValue).jpg"
             if let cached = await ImageCacheManager.shared.retrieve(forKey: key) {
-                try WallpaperService.setWallpaper(from: cached)
+                try WallpaperService.setWallpaper(from: cached, scaling: scaling)
                 addToHistory(pick.id)
                 lastShuffleDate = Date()
                 currentSource = pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
@@ -161,7 +164,7 @@ final class ShuffleEngine {
             }
 
             let url = try await ImageCacheManager.shared.store(data: imageData, forKey: key)
-            try WallpaperService.setWallpaper(from: url)
+            try WallpaperService.setWallpaper(from: url, scaling: scaling)
 
             addToHistory(pick.id)
             lastShuffleDate = Date()
@@ -180,7 +183,7 @@ final class ShuffleEngine {
                     let data = try await PhotoKitConnector.shared.requestImage(assetID: fallback.id)
                     let key = "\(fallback.id.hashValue).jpg"
                     let url = try await ImageCacheManager.shared.store(data: data, forKey: key)
-                    try WallpaperService.setWallpaper(from: url)
+                    try WallpaperService.setWallpaper(from: url, scaling: scaling)
                     addToHistory(fallback.id)
                     lastShuffleDate = Date()
                     currentSource = "Photos (offline)"
