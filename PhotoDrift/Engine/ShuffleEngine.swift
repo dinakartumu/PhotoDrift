@@ -156,7 +156,8 @@ final class ShuffleEngine {
             // Check cache first
             let key = ImageCacheManager.cacheKey(for: pick.id)
             if let cached = await ImageCacheManager.shared.retrieve(forKey: key) {
-                try WallpaperService.setWallpaper(from: cached, scaling: scaling)
+                let cachedData = try Data(contentsOf: cached)
+                try setWallpaper(imageData: cachedData, rawURL: cached, assetID: pick.id, scaling: scaling)
                 addToHistory(pick.id)
                 lastShuffleDate = Date()
                 currentSource = pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
@@ -177,7 +178,7 @@ final class ShuffleEngine {
             }
 
             let url = try await ImageCacheManager.shared.store(data: imageData, forKey: key)
-            try WallpaperService.setWallpaper(from: url, scaling: scaling)
+            try setWallpaper(imageData: imageData, rawURL: url, assetID: pick.id, scaling: scaling)
 
             addToHistory(pick.id)
             lastShuffleDate = Date()
@@ -196,7 +197,7 @@ final class ShuffleEngine {
                     let data = try await PhotoKitConnector.shared.requestImage(assetID: fallback.id)
                     let key = ImageCacheManager.cacheKey(for: fallback.id)
                     let url = try await ImageCacheManager.shared.store(data: data, forKey: key)
-                    try WallpaperService.setWallpaper(from: url, scaling: scaling)
+                    try setWallpaper(imageData: data, rawURL: url, assetID: fallback.id, scaling: scaling)
                     addToHistory(fallback.id)
                     lastShuffleDate = Date()
                     currentSource = "Photos (offline)"
@@ -212,6 +213,26 @@ final class ShuffleEngine {
             statusMessage = "Error: \(error.localizedDescription)"
             postStateChange()
         }
+    }
+
+    private static let gradientDirectory: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent("PhotoDriftImages", isDirectory: true)
+    }()
+
+    private func setWallpaper(imageData: Data, rawURL: URL, assetID: String, scaling: WallpaperScaling) throws {
+        if scaling == .fitToScreen {
+            let screenSize = ScreenUtility.targetSize
+            if let composited = GradientRenderer.composite(imageData: imageData, screenSize: screenSize) {
+                let key = ImageCacheManager.cacheKey(for: assetID)
+                let name = "gradient_\(key).png"
+                let url = Self.gradientDirectory.appendingPathComponent(name)
+                try composited.write(to: url)
+                try WallpaperService.setWallpaper(from: url, scaling: .fillScreen)
+                return
+            }
+        }
+        try WallpaperService.setWallpaper(from: rawURL, scaling: scaling)
     }
 
     private func postStateChange() {
