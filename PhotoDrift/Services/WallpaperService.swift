@@ -33,7 +33,6 @@ enum WallpaperService {
 
     static func setWallpaper(from url: URL, scaling: WallpaperScaling = .fitToScreen) throws {
         let options = desktopImageOptions(for: scaling)
-
         for screen in NSScreen.screens {
             var opts = options
             opts[.fillColor] = NSColor.black
