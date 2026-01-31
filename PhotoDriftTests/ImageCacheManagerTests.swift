@@ -39,6 +39,42 @@ struct ImageCacheManagerTests {
         }
     }
 
+    // MARK: - Gradient filename derivation
+
+    @Test func gradientFilenamesAreUniquePerAssetID() {
+        let key1 = ImageCacheManager.cacheKey(for: "asset-001")
+        let key2 = ImageCacheManager.cacheKey(for: "asset-002")
+        let name1 = "gradient_\(key1).png"
+        let name2 = "gradient_\(key2).png"
+        #expect(name1 != name2)
+    }
+
+    @Test func gradientFilenameIsStableForSameAssetID() {
+        let key = ImageCacheManager.cacheKey(for: "asset-repeat")
+        let name1 = "gradient_\(key).png"
+        let name2 = "gradient_\(key).png"
+        #expect(name1 == name2)
+    }
+
+    @Test func gradientFilenameContainsNoProblemCharacters() {
+        // Asset IDs from Photos (e.g. "B84E8479-475C-4727-A4A4-B77AA9980897/L0/001")
+        // and Lightroom (e.g. "abc123def456") should produce safe filenames
+        let ids = [
+            "B84E8479-475C-4727-A4A4-B77AA9980897/L0/001",
+            "abc123def456",
+            "asset with spaces",
+            "特殊文字",
+        ]
+        let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_."))
+        for id in ids {
+            let key = ImageCacheManager.cacheKey(for: id)
+            let name = "gradient_\(key).png"
+            for scalar in name.unicodeScalars {
+                #expect(safeChars.contains(scalar), "Unsafe character '\(scalar)' in gradient filename for id: \(id)")
+            }
+        }
+    }
+
     // MARK: - Store / Retrieve
 
     @Test func storeAndRetrieveRoundtrip() async throws {

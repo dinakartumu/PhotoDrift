@@ -74,14 +74,16 @@ actor PhotoKitConnector {
         options.isSynchronous = false
 
         return try await withCheckedThrowingContinuation { continuation in
+            var resumed = false
             PHImageManager.default().requestImage(
                 for: asset,
                 targetSize: targetSize,
                 contentMode: .aspectFill,
                 options: options
             ) { image, info in
-                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                guard !isDegraded else { return }
+                // Prevent double-resume if handler is called more than once
+                guard !resumed else { return }
+                resumed = true
 
                 if let error = info?[PHImageErrorKey] as? Error {
                     continuation.resume(throwing: error)

@@ -37,11 +37,9 @@ actor LightroomConnector {
     func downloadImage(assetID: String) async throws -> Data {
         let catID = try await ensureCatalog()
 
-        // Try largest available rendition, fall back to smaller sizes
-        let targetSize = ScreenUtility.targetSize
-        let sizes = targetSize.width > 4096
-            ? ["fullsize", "2048", "1024"]
-            : ["2048", "1024", "640"]
+        // Try largest available rendition, fall back to smaller sizes.
+        // Lightroom API supports: thumbnail2x, 640, 1024, 2048
+        let sizes = ["2048", "1024", "640"]
 
         for size in sizes {
             do {
@@ -51,6 +49,8 @@ actor LightroomConnector {
                     size: size
                 )
             } catch LightroomError.renditionNotFound {
+                continue
+            } catch LightroomError.downloadFailed {
                 continue
             }
         }

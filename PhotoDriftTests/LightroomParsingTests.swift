@@ -143,3 +143,22 @@ struct LightroomParsingTests {
         #expect(response.links == nil)
     }
 }
+
+// MARK: - LightroomError
+
+struct LightroomErrorTests {
+    @Test func errorDescriptions() {
+        #expect(LightroomError.downloadFailed.localizedDescription == "Failed to download rendition")
+        #expect(LightroomError.renditionNotFound.localizedDescription == "Rendition size not available")
+        #expect(LightroomError.noCatalog.localizedDescription == "No Lightroom catalog found")
+        #expect(LightroomError.apiError(400).localizedDescription == "Lightroom API error (HTTP 400)")
+    }
+
+    @Test func apiErrorIncludesStatusCode() {
+        let codes = [400, 401, 403, 404, 500]
+        for code in codes {
+            let desc = LightroomError.apiError(code).localizedDescription
+            #expect(desc.contains("\(code)"))
+        }
+    }
+}
