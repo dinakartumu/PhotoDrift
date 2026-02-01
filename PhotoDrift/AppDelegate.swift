@@ -28,7 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         shuffleEngine = ShuffleEngine(modelContainer: modelContainer)
         loadSavedTokens()
-        autoStartIfNeeded()
         observeWake()
         setupStatusItem()
 
@@ -557,6 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 refreshToken: refreshToken,
                 tokenExpiry: tokenExpiry
             )
+            autoStartIfNeeded()
         }
     }
 
