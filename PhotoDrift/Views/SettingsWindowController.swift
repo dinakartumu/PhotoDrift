@@ -523,7 +523,20 @@ final class SourceSettingsViewController: NSViewController {
                 }
 
                 try? context.save()
-                self.onAlbumsUpdated?()
+                let selectedDescriptor = FetchDescriptor<Album>(
+                    predicate: #Predicate { $0.sourceTypeRaw == "applePhotos" && $0.isSelected }
+                )
+                let selectedAlbumIDs = ((try? context.fetch(selectedDescriptor)) ?? []).map(\.id)
+
+                Task {
+                    let pool = UnifiedPool(modelContainer: self.modelContainer)
+                    for albumID in selectedAlbumIDs {
+                        _ = await pool.syncAssets(forAlbumID: albumID)
+                    }
+                    await MainActor.run {
+                        self.onAlbumsUpdated?()
+                    }
+                }
             }
         }
     }
@@ -554,7 +567,20 @@ final class SourceSettingsViewController: NSViewController {
                     }
 
                     try? context.save()
-                    self.onAlbumsUpdated?()
+                    let selectedDescriptor = FetchDescriptor<Album>(
+                        predicate: #Predicate { $0.sourceTypeRaw == "lightroomCloud" && $0.isSelected }
+                    )
+                    let selectedAlbumIDs = ((try? context.fetch(selectedDescriptor)) ?? []).map(\.id)
+
+                    Task {
+                        let pool = UnifiedPool(modelContainer: self.modelContainer)
+                        for albumID in selectedAlbumIDs {
+                            _ = await pool.syncAssets(forAlbumID: albumID)
+                        }
+                        await MainActor.run {
+                            self.onAlbumsUpdated?()
+                        }
+                    }
                 }
             } catch {
                 // Keep existing data when refresh fails.
@@ -751,6 +777,15 @@ final class AlbumsSettingsViewController: NSViewController {
         guard album.isSelected != shouldSelect else { return }
 
         album.isSelected = shouldSelect
+        if shouldSelect {
+            let settings = AppSettings.current(in: context)
+            switch album.sourceType {
+            case .applePhotos:
+                settings.photosEnabled = true
+            case .lightroomCloud:
+                settings.lightroomEnabled = true
+            }
+        }
 
         var removedAssetIDs: [String] = []
         if !shouldSelect {
@@ -786,6 +821,14 @@ final class AlbumsSettingsViewController: NSViewController {
             predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && !$0.isSelected }
         )
         guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
+
+        let settings = AppSettings.current(in: context)
+        switch source {
+        case .applePhotos:
+            settings.photosEnabled = true
+        case .lightroomCloud:
+            settings.lightroomEnabled = true
+        }
 
         let albumIDs = albums.map(\.id)
         for album in albums {
