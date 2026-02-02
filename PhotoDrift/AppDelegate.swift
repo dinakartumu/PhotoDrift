@@ -155,21 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 8. Choose Albums submenu
-        let albumsItem = NSMenuItem(title: "Choose Albums", action: nil, keyEquivalent: "")
-        let albumsSubmenu = NSMenu()
-        buildAlbumSubmenus(albumsSubmenu)
-        albumsItem.submenu = albumsSubmenu
-        menu.addItem(albumsItem)
-
-        // 9. Display submenu
+        // 8. Display submenu
         let displayItem = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
         let displaySubmenu = NSMenu()
         buildDisplaySubmenu(displaySubmenu)
         displayItem.submenu = displaySubmenu
         menu.addItem(displayItem)
 
-        // 10. Settings
+        // 9. Settings
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -204,7 +197,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSettings() {
         if settingsWC == nil {
-            settingsWC = SettingsWindowController(modelContainer: modelContainer)
+            settingsWC = SettingsWindowController(
+                modelContainer: modelContainer,
+                shuffleEngine: shuffleEngine
+            )
         }
         settingsWC?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
