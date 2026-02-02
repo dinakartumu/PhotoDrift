@@ -590,6 +590,9 @@ final class AlbumsSettingsViewController: NSViewController {
     private let modelContainer: ModelContainer
     private let shuffleEngine: ShuffleEngine
 
+    private var sourceTabs: NSSegmentedControl!
+    private var photosSectionContainer: NSView!
+    private var lightroomSectionContainer: NSView!
     private var photosListStack: NSStackView!
     private var lightroomListStack: NSStackView!
     private var photosSelectAllButton: NSButton!
@@ -612,26 +615,63 @@ final class AlbumsSettingsViewController: NSViewController {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
 
+        let documentView = FlippedContentView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+
         let content = NSStackView()
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 14
+        content.detachesHiddenViews = true
         content.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
         content.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = content
+        documentView.addSubview(content)
 
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            content.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            content.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
+
+            content.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            content.topAnchor.constraint(equalTo: documentView.topAnchor),
+            documentView.bottomAnchor.constraint(greaterThanOrEqualTo: content.bottomAnchor),
         ])
 
-        let subtitle = NSTextField(labelWithString: "Choose the albums PhotoDrift can use for wallpaper shuffling.")
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.lineBreakMode = .byWordWrapping
-        subtitle.maximumNumberOfLines = 2
-        content.addArrangedSubview(subtitle)
+        sourceTabs = NSSegmentedControl(
+            labels: ["Apple Photos", "Adobe Lightroom"],
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(sourceTabChanged(_:))
+        )
+        sourceTabs.selectedSegment = 0
+        sourceTabs.setContentHuggingPriority(.required, for: .vertical)
+        sourceTabs.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        let tabsRow = NSStackView()
+        tabsRow.orientation = .horizontal
+        tabsRow.alignment = .centerY
+        tabsRow.spacing = 8
+        tabsRow.setContentHuggingPriority(.required, for: .vertical)
+        tabsRow.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        let leftSpacer = NSView()
+        leftSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        leftSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tabsRow.addArrangedSubview(leftSpacer)
+
+        tabsRow.addArrangedSubview(sourceTabs)
+
+        let rightSpacer = NSView()
+        rightSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        rightSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tabsRow.addArrangedSubview(rightSpacer)
+        leftSpacer.widthAnchor.constraint(equalTo: rightSpacer.widthAnchor).isActive = true
+
+        content.addArrangedSubview(tabsRow)
 
         content.addArrangedSubview(makeSeparator())
 
@@ -640,22 +680,27 @@ final class AlbumsSettingsViewController: NSViewController {
             selectAllAction: #selector(selectAllPhotosAlbums),
             deselectAllAction: #selector(deselectAllPhotosAlbums)
         )
+        photosSectionContainer = photosSection.container
         photosListStack = photosSection.listStack
         photosSelectAllButton = photosSection.selectAllButton
         photosDeselectAllButton = photosSection.deselectAllButton
         content.addArrangedSubview(photosSection.container)
-
-        content.addArrangedSubview(makeSeparator())
 
         let lightroomSection = makeAlbumsSection(
             title: "Adobe Lightroom",
             selectAllAction: #selector(selectAllLightroomAlbums),
             deselectAllAction: #selector(deselectAllLightroomAlbums)
         )
+        lightroomSectionContainer = lightroomSection.container
         lightroomListStack = lightroomSection.listStack
         lightroomSelectAllButton = lightroomSection.selectAllButton
         lightroomDeselectAllButton = lightroomSection.deselectAllButton
         content.addArrangedSubview(lightroomSection.container)
+
+        let bottomSpacer = NSView()
+        bottomSpacer.setContentHuggingPriority(.defaultLow, for: .vertical)
+        bottomSpacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        content.addArrangedSubview(bottomSpacer)
 
         self.view = scrollView
         reloadAlbums()
@@ -673,6 +718,11 @@ final class AlbumsSettingsViewController: NSViewController {
         photosDeselectAllButton.isEnabled = photosAlbums.contains(where: \.isSelected)
         lightroomSelectAllButton.isEnabled = lightroomAlbums.contains(where: { !$0.isSelected })
         lightroomDeselectAllButton.isEnabled = lightroomAlbums.contains(where: \.isSelected)
+        updateSourceSectionVisibility()
+    }
+
+    @objc private func sourceTabChanged(_ sender: NSSegmentedControl) {
+        updateSourceSectionVisibility()
     }
 
     @objc private func selectAllPhotosAlbums() {
@@ -790,6 +840,12 @@ final class AlbumsSettingsViewController: NSViewController {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    private func updateSourceSectionVisibility() {
+        let showPhotos = sourceTabs.selectedSegment != 1
+        photosSectionContainer.isHidden = !showPhotos
+        lightroomSectionContainer.isHidden = showPhotos
+    }
+
     private func renderAlbums(_ albums: [Album], in stack: NSStackView) {
         for subview in stack.arrangedSubviews {
             stack.removeArrangedSubview(subview)
@@ -895,4 +951,8 @@ private func makeLabeledRow(label: String, control: NSView) -> NSView {
     row.addArrangedSubview(labelField)
     row.addArrangedSubview(control)
     return row
+}
+
+private final class FlippedContentView: NSView {
+    override var isFlipped: Bool { true }
 }
