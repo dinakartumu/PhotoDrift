@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         autoStartIfNeeded()
         observeWake()
         setupStatusItem()
+        registerSavedHotkey()
 
         NotificationCenter.default.addObserver(
             self,
@@ -43,6 +44,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self,
             selector: #selector(lightroomAuthChanged),
             name: .lightroomAuthStateChanged,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hotkeyTriggered),
+            name: .globalHotkeyTriggered,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hotkeySettingsChanged),
+            name: .shuffleHotkeyChanged,
             object: nil
         )
     }
@@ -567,6 +582,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         if let albums = try? context.fetch(descriptor), !albums.isEmpty {
             shuffleEngine.start()
+        }
+    }
+
+    @objc private func hotkeyTriggered() {
+        shuffleNow()
+    }
+
+    @objc private func hotkeySettingsChanged() {
+        registerSavedHotkey()
+    }
+
+    private func registerSavedHotkey() {
+        let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
+        let keyCode = settings.shuffleHotkeyKeyCode
+
+        if keyCode >= 0 {
+            GlobalHotkeyManager.shared.register(
+                keyCode: UInt32(keyCode),
+                modifiers: UInt32(settings.shuffleHotkeyModifiers)
+            )
+        } else {
+            GlobalHotkeyManager.shared.unregister()
         }
     }
 
