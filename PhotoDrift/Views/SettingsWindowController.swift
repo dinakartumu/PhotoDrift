@@ -9,7 +9,7 @@ final class SettingsWindowController: NSWindowController {
         let window = NSWindow(contentViewController: vc)
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 760, height: 560))
+        window.setContentSize(GeneralSettingsViewController.preferredContentSize)
         window.center()
         if #available(macOS 11.0, *) {
             window.toolbarStyle = .preference
@@ -51,6 +51,12 @@ final class SettingsTabViewController: NSTabViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         syncWindowTitle()
+        applyWindowSize(for: tabView.selectedTabViewItem?.viewController, animated: false)
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        applyWindowSize(for: tabView.selectedTabViewItem?.viewController, animated: false)
     }
 
     func refreshAll() {
@@ -64,10 +70,12 @@ final class SettingsTabViewController: NSTabViewController {
         sourceViewController.refreshConnectionStatus()
         albumsViewController.reloadAlbums()
         syncWindowTitle()
+        applyWindowSize(for: tabView.selectedTabViewItem?.viewController, animated: false)
     }
 
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         syncWindowTitle()
+        applyWindowSize(for: tabViewItem?.viewController)
     }
 
     private func setupTabs() {
@@ -97,6 +105,34 @@ final class SettingsTabViewController: NSTabViewController {
         view.window?.title = current
     }
 
+    private func applyWindowSize(for viewController: NSViewController?, animated: Bool = true) {
+        guard let window = view.window else { return }
+        let size: NSSize
+        switch viewController {
+        case is GeneralSettingsViewController:
+            size = GeneralSettingsViewController.preferredContentSize
+        case is SourceSettingsViewController:
+            size = SourceSettingsViewController.preferredContentSize
+        case is AlbumsSettingsViewController:
+            size = AlbumsSettingsViewController.preferredContentSize
+        default:
+            size = GeneralSettingsViewController.preferredContentSize
+        }
+        let currentSize = window.contentRect(forFrameRect: window.frame).size
+        guard currentSize != size else { return }
+
+        guard animated, window.isVisible else {
+            window.setContentSize(size)
+            return
+        }
+
+        let targetFrame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+        var frame = window.frame
+        frame.origin.y += frame.height - targetFrame.height
+        frame.size = targetFrame.size
+        window.setFrame(frame, display: true, animate: true)
+    }
+
     private func addTab(
         label: String,
         systemImageName: String,
@@ -116,6 +152,7 @@ final class SettingsTabViewController: NSTabViewController {
 }
 
 final class GeneralSettingsViewController: NSViewController {
+    static let preferredContentSize = NSSize(width: 500, height: 320)
     private let context: ModelContext
     private var settings: AppSettings!
 
@@ -145,24 +182,19 @@ final class GeneralSettingsViewController: NSViewController {
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 14
-        root.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
+        root.spacing = 18
+        root.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addArrangedSubview(makeSectionLabel("Startup"))
         launchAtLoginCheckbox = NSButton(
             checkboxWithTitle: "Launch at Login",
             target: self,
             action: #selector(launchAtLoginToggled(_:))
         )
-        root.addArrangedSubview(launchAtLoginCheckbox)
-
-        root.addArrangedSubview(makeSeparator())
-        root.addArrangedSubview(makeSectionLabel("Shuffle Interval"))
 
         let radioStack = NSStackView()
         radioStack.orientation = .vertical
         radioStack.alignment = .leading
-        radioStack.spacing = 8
+        radioStack.spacing = 6
         for interval in intervals {
             let radio = NSButton(
                 radioButtonWithTitle: interval.label,
@@ -173,20 +205,39 @@ final class GeneralSettingsViewController: NSViewController {
             radioButtons.append(radio)
             radioStack.addArrangedSubview(radio)
         }
-        root.addArrangedSubview(radioStack)
 
-        root.addArrangedSubview(makeSeparator())
-        root.addArrangedSubview(makeSectionLabel("Wallpaper"))
         scalingPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         scalingPopup.target = self
         scalingPopup.action = #selector(scalingChanged(_:))
+        scalingPopup.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scalingPopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        scalingPopup.translatesAutoresizingMaskIntoConstraints = false
+        scalingPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
         for scaling in WallpaperScaling.allCases {
             scalingPopup.addItem(withTitle: scaling.displayName)
             scalingPopup.lastItem?.representedObject = scaling.rawValue
         }
-        root.addArrangedSubview(makeLabeledRow(label: "Scaling", control: scalingPopup))
+        let startupGrid = makeFormGrid(rows: [("Startup:", launchAtLoginCheckbox)])
+        let shuffleGrid = makeFormGrid(rows: [("Shuffle Interval:", radioStack)])
+        let wallpaperGrid = makeFormGrid(rows: [("Scaling:", scalingPopup)], fillControlColumn: true)
 
-        self.view = root
+        root.addArrangedSubview(startupGrid)
+        root.addArrangedSubview(makeSeparator())
+        root.addArrangedSubview(shuffleGrid)
+        root.addArrangedSubview(makeSeparator())
+        root.addArrangedSubview(wallpaperGrid)
+
+        let container = NSView()
+        container.addSubview(root)
+        NSLayoutConstraint.activate([
+            root.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
+            root.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
+            root.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -32),
+            root.widthAnchor.constraint(lessThanOrEqualToConstant: 620),
+            root.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24),
+        ])
+
+        self.view = container
         refreshState()
     }
 
@@ -240,6 +291,7 @@ final class GeneralSettingsViewController: NSViewController {
 }
 
 final class SourceSettingsViewController: NSViewController {
+    static let preferredContentSize = NSSize(width: 500, height: 300)
     private let modelContainer: ModelContainer
     private let context: ModelContext
     private var settings: AppSettings!
@@ -273,16 +325,14 @@ final class SourceSettingsViewController: NSViewController {
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 14
-        root.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
+        root.spacing = 18
+        root.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addArrangedSubview(makeSectionLabel("Apple Photos"))
         photosCheckbox = NSButton(
             checkboxWithTitle: "Use Apple Photos",
             target: self,
             action: #selector(photosToggled(_:))
         )
-        root.addArrangedSubview(photosCheckbox)
 
         let photosRow = NSStackView()
         photosRow.orientation = .horizontal
@@ -302,18 +352,18 @@ final class SourceSettingsViewController: NSViewController {
         photosRefreshButton.bezelStyle = .rounded
         photosRefreshButton.controlSize = .small
         photosRow.addArrangedSubview(photosRefreshButton)
-
-        root.addArrangedSubview(photosRow)
-
-        root.addArrangedSubview(makeSeparator())
-        root.addArrangedSubview(makeSectionLabel("Adobe Lightroom"))
+        let photosGroup = NSStackView()
+        photosGroup.orientation = .vertical
+        photosGroup.alignment = .leading
+        photosGroup.spacing = 6
+        photosGroup.addArrangedSubview(photosCheckbox)
+        photosGroup.addArrangedSubview(photosRow)
 
         lightroomCheckbox = NSButton(
             checkboxWithTitle: "Use Adobe Lightroom",
             target: self,
             action: #selector(lightroomToggled(_:))
         )
-        root.addArrangedSubview(lightroomCheckbox)
 
         let lrRow = NSStackView()
         lrRow.orientation = .horizontal
@@ -338,10 +388,31 @@ final class SourceSettingsViewController: NSViewController {
         lightroomRefreshButton.bezelStyle = .rounded
         lightroomRefreshButton.controlSize = .small
         lrRow.addArrangedSubview(lightroomRefreshButton)
+        let lightroomGroup = NSStackView()
+        lightroomGroup.orientation = .vertical
+        lightroomGroup.alignment = .leading
+        lightroomGroup.spacing = 6
+        lightroomGroup.addArrangedSubview(lightroomCheckbox)
+        lightroomGroup.addArrangedSubview(lrRow)
 
-        root.addArrangedSubview(lrRow)
+        let photosGrid = makeFormGrid(rows: [("Apple Photos:", photosGroup)])
+        let lightroomGrid = makeFormGrid(rows: [("Adobe Lightroom:", lightroomGroup)])
 
-        self.view = root
+        root.addArrangedSubview(photosGrid)
+        root.addArrangedSubview(makeSeparator())
+        root.addArrangedSubview(lightroomGrid)
+
+        let container = NSView()
+        container.addSubview(root)
+        NSLayoutConstraint.activate([
+            root.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
+            root.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
+            root.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -32),
+            root.widthAnchor.constraint(lessThanOrEqualToConstant: 640),
+            root.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24),
+        ])
+
+        self.view = container
         refreshConnectionStatus()
     }
 
@@ -613,6 +684,7 @@ final class SourceSettingsViewController: NSViewController {
 }
 
 final class AlbumsSettingsViewController: NSViewController {
+    static let preferredContentSize = NSSize(width: 500, height: 560)
     private let modelContainer: ModelContainer
     private let shuffleEngine: ShuffleEngine
 
@@ -971,6 +1043,30 @@ private func makeSectionLabel(_ title: String) -> NSTextField {
     let label = NSTextField(labelWithString: title)
     label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
     return label
+}
+
+private func makeFormGrid(
+    rows: [(String, NSView)],
+    labelWidth: CGFloat = 150,
+    fillControlColumn: Bool = false
+) -> NSGridView {
+    let grid = NSGridView()
+    grid.rowSpacing = 10
+    grid.columnSpacing = 12
+
+    for (index, row) in rows.enumerated() {
+        let labelField = NSTextField(labelWithString: row.0)
+        labelField.alignment = .right
+        labelField.textColor = .secondaryLabelColor
+        labelField.translatesAutoresizingMaskIntoConstraints = false
+        labelField.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
+        grid.addRow(with: [labelField, row.1])
+        grid.row(at: index).yPlacement = .top
+    }
+
+    grid.column(at: 0).xPlacement = .trailing
+    grid.column(at: 1).xPlacement = fillControlColumn ? .fill : .leading
+    return grid
 }
 
 private func makeSeparator() -> NSView {
