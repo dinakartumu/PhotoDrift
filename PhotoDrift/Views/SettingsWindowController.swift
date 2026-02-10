@@ -402,17 +402,31 @@ final class SourceSettingsViewController: NSViewController {
         root.addArrangedSubview(makeSeparator())
         root.addArrangedSubview(lightroomGrid)
 
-        let container = NSView()
-        container.addSubview(root)
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+
+        let documentView = FlippedContentView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+        documentView.addSubview(root)
+
         NSLayoutConstraint.activate([
-            root.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            root.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
-            root.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -32),
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
+
+            root.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 24),
+            root.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 32),
+            root.trailingAnchor.constraint(lessThanOrEqualTo: documentView.trailingAnchor, constant: -32),
             root.widthAnchor.constraint(lessThanOrEqualToConstant: 640),
-            root.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24),
+            documentView.bottomAnchor.constraint(greaterThanOrEqualTo: root.bottomAnchor, constant: 24),
         ])
 
-        self.view = container
+        self.view = scrollView
         refreshConnectionStatus()
     }
 

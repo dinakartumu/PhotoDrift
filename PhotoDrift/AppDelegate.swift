@@ -129,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // 5. Album summary
-        let (hasSelectedAlbums, hasSyncedAssets, summary) = albumSummary()
+        let (_, hasEnabledSelectedAlbums, _, summary) = albumSummary()
         let albumItem = NSMenuItem(title: summary, action: nil, keyEquivalent: "")
         albumItem.isEnabled = false
         menu.addItem(albumItem)
@@ -139,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 6. Shuffle Now
         let shuffleItem = NSMenuItem(title: "Shuffle Now", action: #selector(shuffleNow), keyEquivalent: "")
         shuffleItem.target = self
-        shuffleItem.isEnabled = hasSyncedAssets
+        shuffleItem.isEnabled = hasEnabledSelectedAlbums
         menu.addItem(shuffleItem)
 
         // 7. Pause / Resume
@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let pauseItem = NSMenuItem(title: "Pause", action: #selector(pauseEngine), keyEquivalent: "")
             pauseItem.target = self
             menu.addItem(pauseItem)
-        } else if hasSelectedAlbums {
+        } else if hasEnabledSelectedAlbums {
             let resumeItem = NSMenuItem(title: "Resume", action: #selector(resumeEngine), keyEquivalent: "")
             resumeItem.target = self
             menu.addItem(resumeItem)
@@ -521,14 +521,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Helpers
 
-    private func albumSummary() -> (hasSelectedAlbums: Bool, hasSyncedAssets: Bool, summary: String) {
+    private func albumSummary() -> (
+        hasSelectedAlbums: Bool,
+        hasEnabledSelectedAlbums: Bool,
+        hasSyncedAssets: Bool,
+        summary: String
+    ) {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
         let descriptor = FetchDescriptor<Album>(
             predicate: #Predicate { $0.isSelected == true }
         )
         guard let albums = try? context.fetch(descriptor), !albums.isEmpty else {
-            return (false, false, "No albums selected")
+            return (false, false, false, "No albums selected")
         }
 
         let enabledAlbums = albums.filter { album in
@@ -539,7 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if enabledAlbums.isEmpty {
-            return (true, false, "Selected albums are disabled in Sources")
+            return (true, false, false, "Selected albums are disabled in Sources")
         }
 
         let photosCount = albums.filter { $0.sourceType == .applePhotos }.count
@@ -550,7 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             lrCount > 0 ? "\(lrCount) Lightroom albums" : nil,
         ].compactMap { $0 }
         let summary = "\(parts.joined(separator: ", ")) • \(syncedAssetCount) synced photos"
-        return (true, syncedAssetCount > 0, summary)
+        return (true, true, syncedAssetCount > 0, summary)
     }
 
     private func loadSavedTokens() {
@@ -573,14 +578,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func autoStartIfNeeded() {
         let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
         let descriptor = FetchDescriptor<Album>(
             predicate: #Predicate { $0.isSelected == true }
         )
         if let albums = try? context.fetch(descriptor), !albums.isEmpty {
+            let enabledAlbumIDs = albums.compactMap { album -> String? in
+                switch album.sourceType {
+                case .applePhotos:
+                    return settings.photosEnabled ? album.id : nil
+                case .lightroomCloud:
+                    return settings.lightroomEnabled ? album.id : nil
+                }
+            }
+            guard !enabledAlbumIDs.isEmpty else { return }
+
             shuffleEngine.start()
-            let albumIDs = albums.map(\.id)
             Task {
-                for albumID in albumIDs {
+                for albumID in enabledAlbumIDs {
                     await self.shuffleEngine.syncAssets(forAlbumID: albumID)
                 }
                 await self.shuffleEngine.shuffleNow()
