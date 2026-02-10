@@ -14,12 +14,15 @@ actor UnifiedPool {
         let albumID: String
     }
 
-    func syncAssets(forAlbumID albumID: String) async {
+    @discardableResult
+    func syncAssets(forAlbumID albumID: String) async -> String? {
         let context = ModelContext(modelContainer)
         let descriptor = FetchDescriptor<Album>(
             predicate: #Predicate { $0.id == albumID }
         )
-        guard let album = try? context.fetch(descriptor).first else { return }
+        guard let album = try? context.fetch(descriptor).first else {
+            return "Album not found"
+        }
 
         let fetchedIDs: [String]
         switch album.sourceType {
@@ -29,7 +32,7 @@ actor UnifiedPool {
             do {
                 fetchedIDs = try await LightroomConnector.shared.fetchAssetIDs(albumID: albumID)
             } catch {
-                return
+                return "Lightroom sync failed for '\(album.name)': \(error.localizedDescription)"
             }
         }
 
@@ -51,7 +54,31 @@ actor UnifiedPool {
         }
 
         album.assetCount = fetchedIDs.count
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            return "Failed to save synced assets for '\(album.name)'"
+        }
+        return nil
+    }
+
+    func syncSelectedAlbums() async -> [String] {
+        let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.isSelected }
+        )
+        let selectedAlbums = (try? context.fetch(descriptor)) ?? []
+        var failures: [String] = []
+
+        for album in selectedAlbums {
+            let sourceEnabled = album.sourceType == .applePhotos ? settings.photosEnabled : settings.lightroomEnabled
+            guard sourceEnabled else { continue }
+            if let failure = await syncAssets(forAlbumID: album.id) {
+                failures.append(failure)
+            }
+        }
+        return failures
     }
 
     func buildPool() async throws -> [PoolEntry] {
