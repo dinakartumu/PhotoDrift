@@ -81,6 +81,29 @@ actor UnifiedPool {
         return failures
     }
 
+    func clearAssetsIfAlbumDeselected(forAlbumID albumID: String) async {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.id == albumID }
+        )
+        guard let album = try? context.fetch(descriptor).first else { return }
+        guard !album.isSelected else { return }
+
+        let assets = Array(album.assets)
+        guard !assets.isEmpty else { return }
+
+        let assetIDs = assets.map(\.id)
+        for asset in assets {
+            context.delete(asset)
+        }
+        album.assetCount = 0
+        try? context.save()
+
+        for assetID in assetIDs {
+            await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: assetID))
+        }
+    }
+
     func buildPool() async throws -> [PoolEntry] {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)

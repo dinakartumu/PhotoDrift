@@ -38,6 +38,10 @@ final class ShuffleEngine {
         await unifiedPool.syncAssets(forAlbumID: albumID)
     }
 
+    func clearAssetsIfAlbumDeselected(forAlbumID albumID: String) async {
+        await unifiedPool.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
+    }
+
     func start() {
         guard !isRunning else { return }
         isRunning = true
