@@ -396,21 +396,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         guard let album = try? context.fetch(descriptor).first else { return }
         album.isSelected = isSelected
-        if !isSelected {
-            let assetIDs = album.assets.map(\.id)
-            for asset in album.assets {
-                context.delete(asset)
-            }
-            Task {
-                for id in assetIDs {
-                    await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
-                }
-            }
-        }
         try? context.save()
         if isSelected {
             Task {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+            }
+        } else {
+            Task {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
@@ -441,18 +434,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected }
         )
         guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-        var assetIDs: [String] = []
+        let albumIDs = albums.map(\.id)
         for album in albums {
             album.isSelected = false
-            for asset in album.assets {
-                assetIDs.append(asset.id)
-                context.delete(asset)
-            }
         }
         try? context.save()
         Task {
-            for id in assetIDs {
-                await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
+            for albumID in albumIDs {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
@@ -467,18 +456,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         album.isSelected.toggle()
         let nowSelected = album.isSelected
 
-        if !nowSelected {
-            for asset in album.assets {
-                context.delete(asset)
-            }
-        }
-
         try? context.save()
         sender.state = nowSelected ? .on : .off
 
         if nowSelected {
             Task {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+            }
+        } else {
+            Task {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }

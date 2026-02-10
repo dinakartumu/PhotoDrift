@@ -891,29 +891,16 @@ final class AlbumsSettingsViewController: NSViewController {
             }
         }
 
-        var removedAssetIDs: [String] = []
-        if !shouldSelect {
-            removedAssetIDs = album.assets.map(\.id)
-            for asset in album.assets {
-                context.delete(asset)
-            }
-        }
-
         try? context.save()
-        reloadAlbums()
+        updateSelectionButtonsFromVisibleCheckboxes()
 
         if shouldSelect {
             Task {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
-                await MainActor.run {
-                    self.reloadAlbums()
-                }
             }
-        } else if !removedAssetIDs.isEmpty {
+        } else {
             Task {
-                for id in removedAssetIDs {
-                    await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
-                }
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
@@ -959,20 +946,16 @@ final class AlbumsSettingsViewController: NSViewController {
         )
         guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
 
-        var assetIDs: [String] = []
+        let albumIDs = albums.map(\.id)
         for album in albums {
             album.isSelected = false
-            for asset in album.assets {
-                assetIDs.append(asset.id)
-                context.delete(asset)
-            }
         }
         try? context.save()
         reloadAlbums()
 
         Task {
-            for assetID in assetIDs {
-                await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: assetID))
+            for albumID in albumIDs {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
@@ -991,6 +974,16 @@ final class AlbumsSettingsViewController: NSViewController {
         let showPhotos = sourceTabs.selectedSegment != 1
         photosSectionContainer.isHidden = !showPhotos
         lightroomSectionContainer.isHidden = showPhotos
+    }
+
+    private func updateSelectionButtonsFromVisibleCheckboxes() {
+        let photoCheckboxes = photosListStack.arrangedSubviews.compactMap { $0 as? NSButton }
+        photosSelectAllButton.isEnabled = photoCheckboxes.contains(where: { $0.state == .off })
+        photosDeselectAllButton.isEnabled = photoCheckboxes.contains(where: { $0.state == .on })
+
+        let lightroomCheckboxes = lightroomListStack.arrangedSubviews.compactMap { $0 as? NSButton }
+        lightroomSelectAllButton.isEnabled = lightroomCheckboxes.contains(where: { $0.state == .off })
+        lightroomDeselectAllButton.isEnabled = lightroomCheckboxes.contains(where: { $0.state == .on })
     }
 
     private func renderAlbums(_ albums: [Album], in stack: NSStackView) {
