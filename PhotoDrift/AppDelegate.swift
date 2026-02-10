@@ -76,7 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func lightroomAuthChanged() {
         Task {
             let signedIn = await AdobeAuthManager.shared.isSignedIn
-            await MainActor.run { lightroomSignedIn = signedIn }
+            await MainActor.run {
+                lightroomSignedIn = signedIn
+                shuffleEngine.handleLightroomAuthStateChanged(signedIn: signedIn)
+            }
         }
     }
 
@@ -120,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // 4. Status message
-        if let status = shuffleEngine.statusMessage {
+        if let status = shuffleEngine.statusMessage,
+           !(status == "Lightroom: please sign in again" && lightroomSignedIn) {
             let statusItem = NSMenuItem(title: status, action: nil, keyEquivalent: "")
             statusItem.isEnabled = false
             menu.addItem(statusItem)
@@ -564,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let accessToken = settings.adobeAccessToken
         let refreshToken = settings.adobeRefreshToken
         let tokenExpiry = settings.adobeTokenExpiry
-        lightroomSignedIn = accessToken != nil
+        lightroomSignedIn = refreshToken != nil || (accessToken != nil && tokenExpiry.map { Date() < $0 } == true)
         Task {
             await AdobeAuthManager.shared.configure(modelContainer: modelContainer)
             await AdobeAuthManager.shared.loadTokens(
@@ -572,6 +576,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 refreshToken: refreshToken,
                 tokenExpiry: tokenExpiry
             )
+            let signedIn = await AdobeAuthManager.shared.isSignedIn
+            await MainActor.run {
+                self.lightroomSignedIn = signedIn
+            }
             autoStartIfNeeded()
         }
     }
