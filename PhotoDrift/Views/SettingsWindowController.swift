@@ -990,7 +990,7 @@ final class AlbumsSettingsViewController: NSViewController {
 
         for album in albums {
             let checkbox = NSButton(
-                checkboxWithTitle: album.name,
+                checkboxWithTitle: displayAlbumTitle(album.name),
                 target: self,
                 action: #selector(albumSelectionChanged(_:))
             )
@@ -998,6 +998,26 @@ final class AlbumsSettingsViewController: NSViewController {
             checkbox.identifier = NSUserInterfaceItemIdentifier(album.id)
             stack.addArrangedSubview(checkbox)
         }
+    }
+
+    private func displayAlbumTitle(_ rawName: String) -> String {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.hasSuffix(")"),
+              let openParen = name.lastIndex(of: "("),
+              openParen > name.startIndex else {
+            return name
+        }
+
+        let closeParen = name.index(before: name.endIndex)
+        let countText = name[name.index(after: openParen)..<closeParen]
+        guard !countText.isEmpty,
+              countText.allSatisfy(\.isNumber) else {
+            return name
+        }
+
+        let prefix = name[..<openParen]
+        guard prefix.hasSuffix(" ") else { return name }
+        return String(prefix.dropLast())
     }
 
     private func makeAlbumsSection(
