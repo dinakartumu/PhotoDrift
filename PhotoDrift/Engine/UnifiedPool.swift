@@ -104,6 +104,55 @@ actor UnifiedPool {
         }
     }
 
+    @discardableResult
+    func setAlbumSelection(forAlbumID albumID: String, isSelected: Bool) -> Bool {
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.id == albumID }
+        )
+        guard let album = try? context.fetch(descriptor).first else { return false }
+        guard album.isSelected != isSelected else { return false }
+
+        album.isSelected = isSelected
+        if isSelected {
+            let settings = AppSettings.current(in: context)
+            switch album.sourceType {
+            case .applePhotos:
+                settings.photosEnabled = true
+            case .lightroomCloud:
+                settings.lightroomEnabled = true
+            }
+        }
+        try? context.save()
+        return true
+    }
+
+    func setAlbumsSelection(for source: SourceType, isSelected: Bool) -> [String] {
+        let sourceRaw = source.rawValue
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected != isSelected }
+        )
+        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return [] }
+
+        if isSelected {
+            let settings = AppSettings.current(in: context)
+            switch source {
+            case .applePhotos:
+                settings.photosEnabled = true
+            case .lightroomCloud:
+                settings.lightroomEnabled = true
+            }
+        }
+
+        let albumIDs = albums.map(\.id)
+        for album in albums {
+            album.isSelected = isSelected
+        }
+        try? context.save()
+        return albumIDs
+    }
+
     func buildPool() async throws -> [PoolEntry] {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)

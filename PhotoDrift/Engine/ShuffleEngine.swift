@@ -42,6 +42,15 @@ final class ShuffleEngine {
         await unifiedPool.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
     }
 
+    @discardableResult
+    func setAlbumSelection(forAlbumID albumID: String, isSelected: Bool) async -> Bool {
+        await unifiedPool.setAlbumSelection(forAlbumID: albumID, isSelected: isSelected)
+    }
+
+    func setAlbumsSelection(for source: SourceType, isSelected: Bool) async -> [String] {
+        await unifiedPool.setAlbumsSelection(for: source, isSelected: isSelected)
+    }
+
     func start() {
         guard !isRunning else { return }
         isRunning = true
@@ -136,6 +145,7 @@ final class ShuffleEngine {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
         let scaling = settings.wallpaperScaling
+        let applyToAllDesktops = settings.applyToAllDesktops
 
         var pool: [UnifiedPool.PoolEntry]
         do {
@@ -197,11 +207,17 @@ final class ShuffleEngine {
             let key = ImageCacheManager.cacheKey(for: pick.id)
             if let cached = await ImageCacheManager.shared.retrieve(forKey: key) {
                 let cachedData = try Data(contentsOf: cached)
-                try setWallpaper(imageData: cachedData, rawURL: cached, assetID: pick.id, scaling: scaling)
+                let warning = try setWallpaper(
+                    imageData: cachedData,
+                    rawURL: cached,
+                    assetID: pick.id,
+                    scaling: scaling,
+                    applyToAllDesktops: applyToAllDesktops
+                )
                 addToHistory(pick.id)
                 lastShuffleDate = Date()
                 currentSource = pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
-                statusMessage = nil
+                statusMessage = wallpaperWarningMessage(from: warning)
                 postStateChange()
                 prefetchInBackground(pool: pool)
                 return
@@ -218,11 +234,17 @@ final class ShuffleEngine {
             }
 
             let url = try await ImageCacheManager.shared.store(data: imageData, forKey: key)
-            try setWallpaper(imageData: imageData, rawURL: url, assetID: pick.id, scaling: scaling)
+            let warning = try setWallpaper(
+                imageData: imageData,
+                rawURL: url,
+                assetID: pick.id,
+                scaling: scaling,
+                applyToAllDesktops: applyToAllDesktops
+            )
 
             addToHistory(pick.id)
             lastShuffleDate = Date()
-            statusMessage = nil
+            statusMessage = wallpaperWarningMessage(from: warning)
 
             postStateChange()
             prefetchInBackground(pool: pool)
@@ -238,11 +260,17 @@ final class ShuffleEngine {
                     let data = try await PhotoKitConnector.shared.requestImage(assetID: fallback.id)
                     let key = ImageCacheManager.cacheKey(for: fallback.id)
                     let url = try await ImageCacheManager.shared.store(data: data, forKey: key)
-                    try setWallpaper(imageData: data, rawURL: url, assetID: fallback.id, scaling: scaling)
+                    let warning = try setWallpaper(
+                        imageData: data,
+                        rawURL: url,
+                        assetID: fallback.id,
+                        scaling: scaling,
+                        applyToAllDesktops: applyToAllDesktops
+                    )
                     addToHistory(fallback.id)
                     lastShuffleDate = Date()
                     currentSource = "Photos (offline)"
-                    statusMessage = nil
+                    statusMessage = wallpaperWarningMessage(from: warning)
                 } catch {
                     statusMessage = "Offline, no cached photos available"
                 }
@@ -261,7 +289,13 @@ final class ShuffleEngine {
         return caches.appendingPathComponent("PhotoDriftImages", isDirectory: true)
     }()
 
-    private func setWallpaper(imageData: Data, rawURL: URL, assetID: String, scaling: WallpaperScaling) throws {
+    private func setWallpaper(
+        imageData: Data,
+        rawURL: URL,
+        assetID: String,
+        scaling: WallpaperScaling,
+        applyToAllDesktops: Bool
+    ) throws -> WallpaperService.Warning? {
         if scaling == .fitToScreen {
             let screenSize = ScreenUtility.targetSize
             if let composited = GradientRenderer.composite(imageData: imageData, screenSize: screenSize) {
@@ -269,11 +303,27 @@ final class ShuffleEngine {
                 let name = "gradient_\(key).png"
                 let url = Self.gradientDirectory.appendingPathComponent(name)
                 try composited.write(to: url)
-                try WallpaperService.setWallpaper(from: url, scaling: .fillScreen)
-                return
+                return try WallpaperService.setWallpaper(
+                    from: url,
+                    scaling: .fillScreen,
+                    applyToAllDesktops: applyToAllDesktops
+                )
             }
         }
-        try WallpaperService.setWallpaper(from: rawURL, scaling: scaling)
+        return try WallpaperService.setWallpaper(
+            from: rawURL,
+            scaling: scaling,
+            applyToAllDesktops: applyToAllDesktops
+        )
+    }
+
+    private func wallpaperWarningMessage(from warning: WallpaperService.Warning?) -> String? {
+        guard let warning else { return nil }
+        if let description = warning.errorDescription,
+           let suggestion = warning.recoverySuggestion {
+            return "\(description) \(suggestion)"
+        }
+        return warning.errorDescription
     }
 
     private func postStateChange() {
