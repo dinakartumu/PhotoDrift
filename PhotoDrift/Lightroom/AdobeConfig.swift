@@ -10,5 +10,5 @@ enum AdobeConfig {
     static let callbackScheme = "adobe+184ab10f31827689d51676ba71185df424f3fa09"
     static let codeVerifier = "NteKaJ2v80FNLDYNVwibA5EiboBLbE_s1F7IwGApexD705j2"
     static let codeChallenge = "nt-c5aVWPvukNLxU5MNc4bwVuujKIXpLRVFXlt1TKeI"
-    static let scopes = "openid,lr_partner_apis,lr_partner_rendition_apis"
+    static let scopes = "openid,offline_access,lr_partner_apis,lr_partner_rendition_apis"
 }

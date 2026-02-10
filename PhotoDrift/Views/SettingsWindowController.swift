@@ -509,6 +509,10 @@ final class SourceSettingsViewController: NSViewController {
             } catch {
                 await MainActor.run {
                     self.lightroomSignInButton.isEnabled = true
+                    self.showErrorAlert(
+                        title: "Lightroom Sign In Failed",
+                        message: error.localizedDescription
+                    )
                 }
             }
         }
@@ -689,6 +693,20 @@ final class SourceSettingsViewController: NSViewController {
                     )
                 }
             }
+        }
+    }
+
+    private func showErrorAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
         }
     }
 

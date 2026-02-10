@@ -224,6 +224,7 @@ final class ShuffleEngine {
             prefetchInBackground(pool: pool)
         } catch let error as AdobeAuthError where error == .noRefreshToken {
             statusMessage = "Lightroom: please sign in again"
+            NotificationCenter.default.post(name: .lightroomAuthStateChanged, object: nil)
             postStateChange()
         } catch is URLError {
             // Network offline — try Photos-only fallback
@@ -277,6 +278,13 @@ final class ShuffleEngine {
 
     private func addToHistory(_ id: String) {
         selection.addToHistory(id)
+    }
+
+    @MainActor
+    func handleLightroomAuthStateChanged(signedIn: Bool) {
+        guard signedIn, statusMessage == "Lightroom: please sign in again" else { return }
+        statusMessage = nil
+        postStateChange()
     }
 
     private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {

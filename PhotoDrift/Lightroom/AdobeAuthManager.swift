@@ -106,8 +106,15 @@ actor AdobeAuthManager {
         }
 
         let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+        guard let refresh = tokenResponse.refreshToken else {
+            self.accessToken = nil
+            self.refreshToken = nil
+            self.tokenExpiry = nil
+            await persistTokensIfPossible()
+            throw AdobeAuthError.noRefreshToken
+        }
         self.accessToken = tokenResponse.accessToken
-        self.refreshToken = tokenResponse.refreshToken
+        self.refreshToken = refresh
         self.tokenExpiry = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
         await persistTokensIfPossible()
 
@@ -116,6 +123,9 @@ actor AdobeAuthManager {
 
     func refreshAccessToken() async throws -> String {
         guard let refreshToken else {
+            accessToken = nil
+            tokenExpiry = nil
+            await persistTokensIfPossible()
             throw AdobeAuthError.noRefreshToken
         }
 
@@ -167,7 +177,13 @@ actor AdobeAuthManager {
     }
 
     var isSignedIn: Bool {
-        accessToken != nil
+        if refreshToken != nil {
+            return true
+        }
+        if accessToken != nil, let expiry = tokenExpiry {
+            return Date() < expiry
+        }
+        return false
     }
 
     private func clearSession() {
