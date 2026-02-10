@@ -130,9 +130,10 @@ final class ShuffleEngine {
     @MainActor
     private func performShuffle() async {
         let context = ModelContext(modelContainer)
-        let scaling = AppSettings.current(in: context).wallpaperScaling
+        let settings = AppSettings.current(in: context)
+        let scaling = settings.wallpaperScaling
 
-        let pool: [UnifiedPool.PoolEntry]
+        var pool: [UnifiedPool.PoolEntry]
         do {
             pool = try await unifiedPool.buildPool()
         } catch {
@@ -141,8 +142,43 @@ final class ShuffleEngine {
             return
         }
 
+        if pool.isEmpty {
+            statusMessage = "Syncing selected albums..."
+            postStateChange()
+
+            let syncFailures = await unifiedPool.syncSelectedAlbums()
+
+            do {
+                pool = try await unifiedPool.buildPool()
+            } catch {
+                statusMessage = "Error loading albums: \(error.localizedDescription)"
+                postStateChange()
+                return
+            }
+
+            if !syncFailures.isEmpty && pool.isEmpty {
+                statusMessage = syncFailures[0]
+                postStateChange()
+                return
+            }
+        }
+
         guard !pool.isEmpty else {
-            statusMessage = "No photos available"
+            let selectedDescriptor = FetchDescriptor<Album>(
+                predicate: #Predicate { $0.isSelected == true }
+            )
+            let selectedAlbums = (try? context.fetch(selectedDescriptor)) ?? []
+            let enabledSelectedAlbums = selectedAlbums.filter { album in
+                switch album.sourceType {
+                case .applePhotos: settings.photosEnabled
+                case .lightroomCloud: settings.lightroomEnabled
+                }
+            }
+            if enabledSelectedAlbums.isEmpty, !selectedAlbums.isEmpty {
+                statusMessage = "Selected albums are disabled in Sources"
+            } else {
+                statusMessage = !enabledSelectedAlbums.isEmpty ? "No synced photos yet" : "No photos available"
+            }
             postStateChange()
             return
         }

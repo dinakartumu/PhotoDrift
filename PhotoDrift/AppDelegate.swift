@@ -28,7 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         shuffleEngine = ShuffleEngine(modelContainer: modelContainer)
         loadSavedTokens()
-        autoStartIfNeeded()
         observeWake()
         setupStatusItem()
 
@@ -130,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // 5. Album summary
-        let (hasAlbums, summary) = albumSummary()
+        let (_, hasEnabledSelectedAlbums, _, summary) = albumSummary()
         let albumItem = NSMenuItem(title: summary, action: nil, keyEquivalent: "")
         albumItem.isEnabled = false
         menu.addItem(albumItem)
@@ -140,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 6. Shuffle Now
         let shuffleItem = NSMenuItem(title: "Shuffle Now", action: #selector(shuffleNow), keyEquivalent: "")
         shuffleItem.target = self
-        shuffleItem.isEnabled = hasAlbums
+        shuffleItem.isEnabled = hasEnabledSelectedAlbums
         menu.addItem(shuffleItem)
 
         // 7. Pause / Resume
@@ -148,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let pauseItem = NSMenuItem(title: "Pause", action: #selector(pauseEngine), keyEquivalent: "")
             pauseItem.target = self
             menu.addItem(pauseItem)
-        } else if hasAlbums {
+        } else if hasEnabledSelectedAlbums {
             let resumeItem = NSMenuItem(title: "Resume", action: #selector(resumeEngine), keyEquivalent: "")
             resumeItem.target = self
             menu.addItem(resumeItem)
@@ -156,21 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 8. Choose Albums submenu
-        let albumsItem = NSMenuItem(title: "Choose Albums", action: nil, keyEquivalent: "")
-        let albumsSubmenu = NSMenu()
-        buildAlbumSubmenus(albumsSubmenu)
-        albumsItem.submenu = albumsSubmenu
-        menu.addItem(albumsItem)
-
-        // 9. Display submenu
+        // 8. Display submenu
         let displayItem = NSMenuItem(title: "Display", action: nil, keyEquivalent: "")
         let displaySubmenu = NSMenu()
         buildDisplaySubmenu(displaySubmenu)
         displayItem.submenu = displaySubmenu
         menu.addItem(displayItem)
 
-        // 10. Settings
+        // 9. Settings
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -205,7 +197,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSettings() {
         if settingsWC == nil {
-            settingsWC = SettingsWindowController(modelContainer: modelContainer)
+            settingsWC = SettingsWindowController(
+                modelContainer: modelContainer,
+                shuffleEngine: shuffleEngine
+            )
         }
         settingsWC?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -526,21 +521,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Helpers
 
-    private func albumSummary() -> (hasAlbums: Bool, summary: String) {
+    private func albumSummary() -> (
+        hasSelectedAlbums: Bool,
+        hasEnabledSelectedAlbums: Bool,
+        hasSyncedAssets: Bool,
+        summary: String
+    ) {
         let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
         let descriptor = FetchDescriptor<Album>(
             predicate: #Predicate { $0.isSelected == true }
         )
         guard let albums = try? context.fetch(descriptor), !albums.isEmpty else {
-            return (false, "No albums selected")
+            return (false, false, false, "No albums selected")
         }
+
+        let enabledAlbums = albums.filter { album in
+            switch album.sourceType {
+            case .applePhotos: settings.photosEnabled
+            case .lightroomCloud: settings.lightroomEnabled
+            }
+        }
+
+        if enabledAlbums.isEmpty {
+            return (true, false, false, "Selected albums are disabled in Sources")
+        }
+
         let photosCount = albums.filter { $0.sourceType == .applePhotos }.count
         let lrCount = albums.filter { $0.sourceType == .lightroomCloud }.count
+        let syncedAssetCount = enabledAlbums.reduce(0) { $0 + $1.assets.count }
         let parts = [
-            photosCount > 0 ? "\(photosCount) Photos" : nil,
-            lrCount > 0 ? "\(lrCount) Lightroom" : nil,
+            photosCount > 0 ? "\(photosCount) Photos albums" : nil,
+            lrCount > 0 ? "\(lrCount) Lightroom albums" : nil,
         ].compactMap { $0 }
-        return (true, parts.joined(separator: ", "))
+        let summary = "\(parts.joined(separator: ", ")) • \(syncedAssetCount) synced photos"
+        return (true, true, syncedAssetCount > 0, summary)
     }
 
     private func loadSavedTokens() {
@@ -557,16 +572,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 refreshToken: refreshToken,
                 tokenExpiry: tokenExpiry
             )
+            autoStartIfNeeded()
         }
     }
 
     private func autoStartIfNeeded() {
         let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
         let descriptor = FetchDescriptor<Album>(
             predicate: #Predicate { $0.isSelected == true }
         )
         if let albums = try? context.fetch(descriptor), !albums.isEmpty {
+            let enabledAlbumIDs = albums.compactMap { album -> String? in
+                switch album.sourceType {
+                case .applePhotos:
+                    return settings.photosEnabled ? album.id : nil
+                case .lightroomCloud:
+                    return settings.lightroomEnabled ? album.id : nil
+                }
+            }
+            guard !enabledAlbumIDs.isEmpty else { return }
+
             shuffleEngine.start()
+            Task {
+                for albumID in enabledAlbumIDs {
+                    await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+                }
+                await self.shuffleEngine.shuffleNow()
+            }
         }
     }
 
