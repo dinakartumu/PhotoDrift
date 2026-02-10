@@ -989,14 +989,8 @@ final class AlbumsSettingsViewController: NSViewController {
         }
 
         for album in albums {
-            let title: String
-            if album.assetCount > 0 {
-                title = "\(album.name) (\(album.assetCount))"
-            } else {
-                title = album.name
-            }
             let checkbox = NSButton(
-                checkboxWithTitle: title,
+                checkboxWithTitle: album.name,
                 target: self,
                 action: #selector(albumSelectionChanged(_:))
             )
