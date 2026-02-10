@@ -390,37 +390,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleAlbumToggle(albumID: String, isSelected: Bool) {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.id == albumID }
-        )
-        guard let album = try? context.fetch(descriptor).first else { return }
-        album.isSelected = isSelected
-        try? context.save()
-        if isSelected {
-            Task {
+        Task {
+            let changed = await self.shuffleEngine.setAlbumSelection(forAlbumID: albumID, isSelected: isSelected)
+            guard changed else { return }
+            if isSelected {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
-            }
-        } else {
-            Task {
+            } else {
                 await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
 
     @objc private func selectAllAlbums(_ sender: NSMenuItem) {
-        guard let sourceRaw = sender.representedObject as? String else { return }
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && !$0.isSelected }
-        )
-        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-        let albumIDs = albums.map(\.id)
-        for album in albums {
-            album.isSelected = true
-        }
-        try? context.save()
+        guard let sourceRaw = sender.representedObject as? String,
+              let source = SourceType(rawValue: sourceRaw) else { return }
         Task {
+            let albumIDs = await self.shuffleEngine.setAlbumsSelection(for: source, isSelected: true)
             for id in albumIDs {
                 await self.shuffleEngine.syncAssets(forAlbumID: id)
             }
@@ -428,18 +413,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func deselectAllAlbums(_ sender: NSMenuItem) {
-        guard let sourceRaw = sender.representedObject as? String else { return }
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected }
-        )
-        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-        let albumIDs = albums.map(\.id)
-        for album in albums {
-            album.isSelected = false
-        }
-        try? context.save()
+        guard let sourceRaw = sender.representedObject as? String,
+              let source = SourceType(rawValue: sourceRaw) else { return }
         Task {
+            let albumIDs = await self.shuffleEngine.setAlbumsSelection(for: source, isSelected: false)
             for albumID in albumIDs {
                 await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
@@ -448,23 +425,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func albumToggled(_ sender: NSMenuItem) {
         guard let albumID = sender.representedObject as? String else { return }
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.id == albumID }
-        )
-        guard let album = try? context.fetch(descriptor).first else { return }
-        album.isSelected.toggle()
-        let nowSelected = album.isSelected
-
-        try? context.save()
+        let nowSelected = sender.state == .off
         sender.state = nowSelected ? .on : .off
 
-        if nowSelected {
-            Task {
+        Task {
+            let changed = await self.shuffleEngine.setAlbumSelection(forAlbumID: albumID, isSelected: nowSelected)
+            guard changed else { return }
+            if nowSelected {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
-            }
-        } else {
-            Task {
+            } else {
                 await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
