@@ -388,6 +388,10 @@ final class ShuffleEngine {
     }
 
     func handleActiveSpaceChanged() {
+        let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
+        guard settings.applyToAllDesktops else { return }
+
         guard let url = lastAppliedWallpaperURL else { return }
         // Mission Control gestures can emit back-to-back notifications.
         guard Date().timeIntervalSince(lastSpaceReapplyDate) > 0.4 else { return }

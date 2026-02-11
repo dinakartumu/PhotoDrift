@@ -1,22 +1,6 @@
 import Testing
 import SwiftData
-import Foundation
 @testable import PhotoDrift
-
-private func withClearedAllDesktopPreference(_ body: () throws -> Void) rethrows {
-    let defaults = UserDefaults.standard
-    let key = WallpaperTargetPreferences.defaultsKey
-    let previous = defaults.object(forKey: key)
-    defaults.removeObject(forKey: key)
-    defer {
-        if let previous {
-            defaults.set(previous, forKey: key)
-        } else {
-            defaults.removeObject(forKey: key)
-        }
-    }
-    try body()
-}
 
 func makeTestContainer() throws -> ModelContainer {
     let schema = Schema([Album.self, Asset.self, AppSettings.self])
@@ -71,23 +55,11 @@ struct WallpaperScalingTests_Model {
 
 struct AppSettingsTests {
     @Test func defaults() throws {
-        try withClearedAllDesktopPreference {
-            let settings = AppSettings()
-            #expect(settings.shuffleIntervalMinutes == 30)
-            #expect(settings.photosEnabled == true)
-            #expect(settings.lightroomEnabled == false)
-            #expect(settings.applyToAllDesktops == true)
-            #expect(settings.wallpaperScaling == .fitToScreen)
-        }
-    }
-
-    @Test func applyToAllDesktopsDefaultsAndPersists() throws {
-        try withClearedAllDesktopPreference {
-            let settings = AppSettings()
-            #expect(settings.applyToAllDesktops == true)
-            settings.applyToAllDesktops = false
-            #expect(settings.applyToAllDesktops == false)
-        }
+        let settings = AppSettings()
+        #expect(settings.shuffleIntervalMinutes == 30)
+        #expect(settings.photosEnabled == true)
+        #expect(settings.lightroomEnabled == false)
+        #expect(settings.wallpaperScaling == .fitToScreen)
     }
 
     @Test func wallpaperScalingTransientGetSet() throws {
@@ -102,15 +74,12 @@ struct AppSettingsTests {
     }
 
     @Test func currentCreatesNewIfNoneExists() throws {
-        try withClearedAllDesktopPreference {
-            let container = try makeTestContainer()
-            let context = ModelContext(container)
+        let container = try makeTestContainer()
+        let context = ModelContext(container)
 
-            let settings = AppSettings.current(in: context)
-            #expect(settings.shuffleIntervalMinutes == 30)
-            #expect(settings.photosEnabled == true)
-            #expect(settings.applyToAllDesktops == true)
-        }
+        let settings = AppSettings.current(in: context)
+        #expect(settings.shuffleIntervalMinutes == 30)
+        #expect(settings.photosEnabled == true)
     }
 
     @Test func currentReturnsExistingIfPresent() throws {
