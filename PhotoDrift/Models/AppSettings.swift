@@ -67,10 +67,13 @@ final class AppSettings {
 enum WallpaperTargetPreferences {
     static let defaultsKey = "PhotoDrift.applyToAllDesktops"
 
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [defaultsKey: true])
+    }
+
     static var applyToAllDesktops: Bool {
         get {
-            let defaults = UserDefaults.standard
-            return defaults.object(forKey: defaultsKey) as? Bool ?? true
+            UserDefaults.standard.bool(forKey: defaultsKey)
         }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKey)
