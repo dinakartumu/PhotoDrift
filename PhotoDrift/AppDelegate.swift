@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        WallpaperTargetPreferences.registerDefaults()
+
         let schema = Schema([Album.self, Asset.self, AppSettings.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
