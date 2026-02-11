@@ -8,7 +8,7 @@ enum WallpaperService {
         var errorDescription: String? {
             switch self {
             case .allDesktopsPermissionDenied:
-                return "Wallpaper updated for current desktop only."
+                return "Wallpaper updated for current desktop only. Allow PhotoDrift to control System Events in Privacy & Security > Automation."
             case .allDesktopsAutomationFailed(let message):
                 return "Wallpaper updated for current desktop only. \(message)"
             }
@@ -84,10 +84,27 @@ enum WallpaperService {
         }
     }
 
-    static func allDesktopsAppleScript(for url: URL) -> String {
+    static func allDesktopsAppleScript(for url: URL, ensureLaunched: Bool = false) -> String {
         let escapedPath = escapeForAppleScript(url.path)
+        let launchPrefix = ensureLaunched ? """
+            launch
+            repeat 30 times
+                try
+                    set _desktopCount to count of desktops
+                    exit repeat
+                on error
+                    delay 0.1
+                end try
+            end repeat
+
+        """ : ""
         return """
-        tell application id "com.apple.systemevents"
+        tell application "System Events"
+        \(launchPrefix)    -- Apply to every Space/desktop in the active display set.
+            repeat with desk in desktops
+                set picture of desk to POSIX file "\(escapedPath)"
+            end repeat
+            delay 0.2
             repeat with desk in desktops
                 set picture of desk to POSIX file "\(escapedPath)"
             end repeat
@@ -102,17 +119,26 @@ enum WallpaperService {
     }
 
     private static func applyWallpaperToAllDesktops(url: URL) throws {
-        do {
-            try executeAppleScript(allDesktopsAppleScript(for: url))
-        } catch let error as AutomationError {
-            guard shouldRetryAfterLaunchingSystemEvents(error) else { throw error }
-            try launchSystemEvents()
-            try executeAppleScript(allDesktopsAppleScript(for: url))
-        }
-    }
+        let script = allDesktopsAppleScript(for: url, ensureLaunched: true)
+        let deadline = Date().addingTimeInterval(8)
+        var lastRetryError: AutomationError?
 
-    private static func launchSystemEvents() throws {
-        try executeAppleScript(#"tell application id "com.apple.systemevents" to launch"#)
+        while Date() < deadline {
+            do {
+                try executeAppleScript(script)
+                return
+            } catch let retryError as AutomationError {
+                if case .permissionDenied = retryError { throw retryError }
+                lastRetryError = retryError
+                if shouldRetryAfterLaunchingSystemEvents(retryError) {
+                    Thread.sleep(forTimeInterval: 0.2)
+                    continue
+                }
+                throw retryError
+            }
+        }
+
+        throw lastRetryError ?? .executionFailed("Timed out while updating all desktops.")
     }
 
     private static func executeAppleScript(_ source: String) throws {

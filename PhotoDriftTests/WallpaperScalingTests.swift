@@ -64,7 +64,7 @@ struct WallpaperScalingOptionTests {
     @Test func allDesktopsAppleScriptUsesPosixFilePath() {
         let url = URL(fileURLWithPath: "/Users/test/Pictures/wallpaper 1.jpg")
         let source = WallpaperService.allDesktopsAppleScript(for: url)
-        #expect(source.contains(#"tell application id "com.apple.systemevents""#))
+        #expect(source.contains(#"tell application "System Events""#))
         #expect(source.contains(#"repeat with desk in desktops"#))
         #expect(source.contains(#"set picture of desk to POSIX file "/Users/test/Pictures/wallpaper 1.jpg""#))
     }

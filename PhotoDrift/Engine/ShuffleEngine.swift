@@ -23,6 +23,9 @@ final class ShuffleEngine {
     private let modelContainer: ModelContainer
     private let unifiedPool: UnifiedPool
     private let photoObserver = PhotoLibraryObserver()
+    private var lastAppliedWallpaperURL: URL?
+    private var lastAppliedWallpaperScaling: WallpaperScaling = .fitToScreen
+    private var lastSpaceReapplyDate: Date = .distantPast
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -303,18 +306,24 @@ final class ShuffleEngine {
                 let name = "gradient_\(key).png"
                 let url = Self.gradientDirectory.appendingPathComponent(name)
                 try composited.write(to: url)
-                return try WallpaperService.setWallpaper(
+                let warning = try WallpaperService.setWallpaper(
                     from: url,
                     scaling: .fillScreen,
                     applyToAllDesktops: applyToAllDesktops
                 )
+                lastAppliedWallpaperURL = url
+                lastAppliedWallpaperScaling = .fillScreen
+                return warning
             }
         }
-        return try WallpaperService.setWallpaper(
+        let warning = try WallpaperService.setWallpaper(
             from: rawURL,
             scaling: scaling,
             applyToAllDesktops: applyToAllDesktops
         )
+        lastAppliedWallpaperURL = rawURL
+        lastAppliedWallpaperScaling = scaling
+        return warning
     }
 
     private func wallpaperWarningMessage(from warning: WallpaperService.Warning?) -> String? {
@@ -375,6 +384,24 @@ final class ShuffleEngine {
             Task { await shuffleNow() }
         } else {
             scheduleNext()
+        }
+    }
+
+    func handleActiveSpaceChanged() {
+        guard let url = lastAppliedWallpaperURL else { return }
+        // Mission Control gestures can emit back-to-back notifications.
+        guard Date().timeIntervalSince(lastSpaceReapplyDate) > 0.4 else { return }
+        lastSpaceReapplyDate = Date()
+
+        do {
+            _ = try WallpaperService.setWallpaper(
+                from: url,
+                scaling: lastAppliedWallpaperScaling,
+                applyToAllDesktops: false
+            )
+        } catch {
+            statusMessage = "Space change wallpaper apply failed: \(error.localizedDescription)"
+            postStateChange()
         }
     }
 }

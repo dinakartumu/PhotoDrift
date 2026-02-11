@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shuffleEngine = ShuffleEngine(modelContainer: modelContainer)
         loadSavedTokens()
         observeWake()
+        observeActiveSpaceChanges()
         setupStatusItem()
 
         NotificationCenter.default.addObserver(
@@ -574,6 +575,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             queue: .main
         ) { [weak self] _ in
             self?.shuffleEngine.handleWake()
+        }
+    }
+
+    private func observeActiveSpaceChanges() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.shuffleEngine.handleActiveSpaceChanged()
         }
     }
 }
