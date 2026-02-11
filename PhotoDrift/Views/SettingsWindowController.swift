@@ -167,6 +167,7 @@ final class GeneralSettingsViewController: NSViewController {
     private var radioButtons: [NSButton] = []
     private var launchAtLoginCheckbox: NSButton!
     private var scalingPopup: NSPopUpButton!
+    private var applyAllDesktopsCheckbox: NSButton!
 
     init(modelContainer: ModelContainer) {
         self.context = ModelContext(modelContainer)
@@ -217,9 +218,20 @@ final class GeneralSettingsViewController: NSViewController {
             scalingPopup.addItem(withTitle: scaling.displayName)
             scalingPopup.lastItem?.representedObject = scaling.rawValue
         }
+        applyAllDesktopsCheckbox = NSButton(
+            checkboxWithTitle: "Update all desktops (all Spaces)",
+            target: self,
+            action: #selector(applyAllDesktopsToggled(_:))
+        )
         let startupGrid = makeFormGrid(rows: [("Startup:", launchAtLoginCheckbox)])
         let shuffleGrid = makeFormGrid(rows: [("Shuffle Interval:", radioStack)])
-        let wallpaperGrid = makeFormGrid(rows: [("Scaling:", scalingPopup)], fillControlColumn: true)
+        let wallpaperGrid = makeFormGrid(
+            rows: [
+                ("Scaling:", scalingPopup),
+                ("Target:", applyAllDesktopsCheckbox),
+            ],
+            fillControlColumn: true
+        )
 
         root.addArrangedSubview(startupGrid)
         root.addArrangedSubview(makeSeparator())
@@ -255,6 +267,8 @@ final class GeneralSettingsViewController: NSViewController {
         }) {
             scalingPopup.select(item)
         }
+
+        applyAllDesktopsCheckbox.state = settings.applyToAllDesktops ? .on : .off
     }
 
     @objc private func intervalChanged(_ sender: NSButton) {
@@ -282,6 +296,11 @@ final class GeneralSettingsViewController: NSViewController {
         guard let rawValue = sender.selectedItem?.representedObject as? String,
               let scaling = WallpaperScaling(rawValue: rawValue) else { return }
         settings.wallpaperScaling = scaling
+        save()
+    }
+
+    @objc private func applyAllDesktopsToggled(_ sender: NSButton) {
+        settings.applyToAllDesktops = sender.state == .on
         save()
     }
 
@@ -509,6 +528,10 @@ final class SourceSettingsViewController: NSViewController {
             } catch {
                 await MainActor.run {
                     self.lightroomSignInButton.isEnabled = true
+                    self.showErrorAlert(
+                        title: "Lightroom Sign In Failed",
+                        message: error.localizedDescription
+                    )
                 }
             }
         }
@@ -692,6 +715,20 @@ final class SourceSettingsViewController: NSViewController {
         }
     }
 
+    private func showErrorAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
+        }
+    }
+
     private func save() {
         try? context.save()
     }
@@ -856,74 +893,26 @@ final class AlbumsSettingsViewController: NSViewController {
     @objc private func albumSelectionChanged(_ sender: NSButton) {
         guard let albumID = sender.identifier?.rawValue else { return }
         let shouldSelect = sender.state == .on
+        updateSelectionButtonsFromVisibleCheckboxes()
 
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(predicate: #Predicate { $0.id == albumID })
-        guard let album = try? context.fetch(descriptor).first else { return }
-        guard album.isSelected != shouldSelect else { return }
-
-        album.isSelected = shouldSelect
-        if shouldSelect {
-            let settings = AppSettings.current(in: context)
-            switch album.sourceType {
-            case .applePhotos:
-                settings.photosEnabled = true
-            case .lightroomCloud:
-                settings.lightroomEnabled = true
-            }
-        }
-
-        var removedAssetIDs: [String] = []
-        if !shouldSelect {
-            removedAssetIDs = album.assets.map(\.id)
-            for asset in album.assets {
-                context.delete(asset)
-            }
-        }
-
-        try? context.save()
-        reloadAlbums()
-
-        if shouldSelect {
-            Task {
+        Task {
+            let changed = await self.shuffleEngine.setAlbumSelection(forAlbumID: albumID, isSelected: shouldSelect)
+            guard changed else { return }
+            if shouldSelect {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
-                await MainActor.run {
-                    self.reloadAlbums()
-                }
-            }
-        } else if !removedAssetIDs.isEmpty {
-            Task {
-                for id in removedAssetIDs {
-                    await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
-                }
+            } else {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
 
     private func selectAllAlbums(for source: SourceType) {
-        let sourceRaw = source.rawValue
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && !$0.isSelected }
-        )
-        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-
-        let settings = AppSettings.current(in: context)
-        switch source {
-        case .applePhotos:
-            settings.photosEnabled = true
-        case .lightroomCloud:
-            settings.lightroomEnabled = true
-        }
-
-        let albumIDs = albums.map(\.id)
-        for album in albums {
-            album.isSelected = true
-        }
-        try? context.save()
-        reloadAlbums()
+        setVisibleSelection(for: source, isSelected: true)
+        updateSelectionButtonsFromVisibleCheckboxes()
 
         Task {
+            let albumIDs = await self.shuffleEngine.setAlbumsSelection(for: source, isSelected: true)
+            guard !albumIDs.isEmpty else { return }
             for albumID in albumIDs {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
             }
@@ -934,27 +923,17 @@ final class AlbumsSettingsViewController: NSViewController {
     }
 
     private func deselectAllAlbums(for source: SourceType) {
-        let sourceRaw = source.rawValue
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected }
-        )
-        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-
-        var assetIDs: [String] = []
-        for album in albums {
-            album.isSelected = false
-            for asset in album.assets {
-                assetIDs.append(asset.id)
-                context.delete(asset)
-            }
-        }
-        try? context.save()
-        reloadAlbums()
+        setVisibleSelection(for: source, isSelected: false)
+        updateSelectionButtonsFromVisibleCheckboxes()
 
         Task {
-            for assetID in assetIDs {
-                await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: assetID))
+            let albumIDs = await self.shuffleEngine.setAlbumsSelection(for: source, isSelected: false)
+            guard !albumIDs.isEmpty else { return }
+            for albumID in albumIDs {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
+            }
+            await MainActor.run {
+                self.reloadAlbums()
             }
         }
     }
@@ -975,6 +954,29 @@ final class AlbumsSettingsViewController: NSViewController {
         lightroomSectionContainer.isHidden = showPhotos
     }
 
+    private func updateSelectionButtonsFromVisibleCheckboxes() {
+        let photoCheckboxes = photosListStack.arrangedSubviews.compactMap { $0 as? NSButton }
+        photosSelectAllButton.isEnabled = photoCheckboxes.contains(where: { $0.state == .off })
+        photosDeselectAllButton.isEnabled = photoCheckboxes.contains(where: { $0.state == .on })
+
+        let lightroomCheckboxes = lightroomListStack.arrangedSubviews.compactMap { $0 as? NSButton }
+        lightroomSelectAllButton.isEnabled = lightroomCheckboxes.contains(where: { $0.state == .off })
+        lightroomDeselectAllButton.isEnabled = lightroomCheckboxes.contains(where: { $0.state == .on })
+    }
+
+    private func setVisibleSelection(for source: SourceType, isSelected: Bool) {
+        let stack: NSStackView
+        switch source {
+        case .applePhotos:
+            stack = photosListStack
+        case .lightroomCloud:
+            stack = lightroomListStack
+        }
+        for checkbox in stack.arrangedSubviews.compactMap({ $0 as? NSButton }) {
+            checkbox.state = isSelected ? .on : .off
+        }
+    }
+
     private func renderAlbums(_ albums: [Album], in stack: NSStackView) {
         for subview in stack.arrangedSubviews {
             stack.removeArrangedSubview(subview)
@@ -989,14 +991,8 @@ final class AlbumsSettingsViewController: NSViewController {
         }
 
         for album in albums {
-            let title: String
-            if album.assetCount > 0 {
-                title = "\(album.name) (\(album.assetCount))"
-            } else {
-                title = album.name
-            }
             let checkbox = NSButton(
-                checkboxWithTitle: title,
+                checkboxWithTitle: displayAlbumTitle(album.name),
                 target: self,
                 action: #selector(albumSelectionChanged(_:))
             )
@@ -1004,6 +1000,26 @@ final class AlbumsSettingsViewController: NSViewController {
             checkbox.identifier = NSUserInterfaceItemIdentifier(album.id)
             stack.addArrangedSubview(checkbox)
         }
+    }
+
+    private func displayAlbumTitle(_ rawName: String) -> String {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.hasSuffix(")"),
+              let openParen = name.lastIndex(of: "("),
+              openParen > name.startIndex else {
+            return name
+        }
+
+        let closeParen = name.index(before: name.endIndex)
+        let countText = name[name.index(after: openParen)..<closeParen]
+        guard !countText.isEmpty,
+              countText.allSatisfy(\.isNumber) else {
+            return name
+        }
+
+        let prefix = name[..<openParen]
+        guard prefix.hasSuffix(" ") else { return name }
+        return String(prefix.dropLast())
     }
 
     private func makeAlbumsSection(

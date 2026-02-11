@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        WallpaperTargetPreferences.registerDefaults()
+
         let schema = Schema([Album.self, Asset.self, AppSettings.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shuffleEngine = ShuffleEngine(modelContainer: modelContainer)
         loadSavedTokens()
         observeWake()
+        observeActiveSpaceChanges()
         setupStatusItem()
 
         NotificationCenter.default.addObserver(
@@ -76,7 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func lightroomAuthChanged() {
         Task {
             let signedIn = await AdobeAuthManager.shared.isSignedIn
-            await MainActor.run { lightroomSignedIn = signedIn }
+            await MainActor.run {
+                lightroomSignedIn = signedIn
+                shuffleEngine.handleLightroomAuthStateChanged(signedIn: signedIn)
+            }
         }
     }
 
@@ -120,7 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // 4. Status message
-        if let status = shuffleEngine.statusMessage {
+        if let status = shuffleEngine.statusMessage,
+           !(status == "Lightroom: please sign in again" && lightroomSignedIn) {
             let statusItem = NSMenuItem(title: status, action: nil, keyEquivalent: "")
             statusItem.isEnabled = false
             menu.addItem(statusItem)
@@ -386,44 +393,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleAlbumToggle(albumID: String, isSelected: Bool) {
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.id == albumID }
-        )
-        guard let album = try? context.fetch(descriptor).first else { return }
-        album.isSelected = isSelected
-        if !isSelected {
-            let assetIDs = album.assets.map(\.id)
-            for asset in album.assets {
-                context.delete(asset)
-            }
-            Task {
-                for id in assetIDs {
-                    await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
-                }
-            }
-        }
-        try? context.save()
-        if isSelected {
-            Task {
+        Task {
+            let changed = await self.shuffleEngine.setAlbumSelection(forAlbumID: albumID, isSelected: isSelected)
+            guard changed else { return }
+            if isSelected {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+            } else {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
 
     @objc private func selectAllAlbums(_ sender: NSMenuItem) {
-        guard let sourceRaw = sender.representedObject as? String else { return }
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && !$0.isSelected }
-        )
-        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-        let albumIDs = albums.map(\.id)
-        for album in albums {
-            album.isSelected = true
-        }
-        try? context.save()
+        guard let sourceRaw = sender.representedObject as? String,
+              let source = SourceType(rawValue: sourceRaw) else { return }
         Task {
+            let albumIDs = await self.shuffleEngine.setAlbumsSelection(for: source, isSelected: true)
             for id in albumIDs {
                 await self.shuffleEngine.syncAssets(forAlbumID: id)
             }
@@ -431,50 +416,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func deselectAllAlbums(_ sender: NSMenuItem) {
-        guard let sourceRaw = sender.representedObject as? String else { return }
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.sourceTypeRaw == sourceRaw && $0.isSelected }
-        )
-        guard let albums = try? context.fetch(descriptor), !albums.isEmpty else { return }
-        var assetIDs: [String] = []
-        for album in albums {
-            album.isSelected = false
-            for asset in album.assets {
-                assetIDs.append(asset.id)
-                context.delete(asset)
-            }
-        }
-        try? context.save()
+        guard let sourceRaw = sender.representedObject as? String,
+              let source = SourceType(rawValue: sourceRaw) else { return }
         Task {
-            for id in assetIDs {
-                await ImageCacheManager.shared.remove(forKey: ImageCacheManager.cacheKey(for: id))
+            let albumIDs = await self.shuffleEngine.setAlbumsSelection(for: source, isSelected: false)
+            for albumID in albumIDs {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
 
     @objc private func albumToggled(_ sender: NSMenuItem) {
         guard let albumID = sender.representedObject as? String else { return }
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Album>(
-            predicate: #Predicate { $0.id == albumID }
-        )
-        guard let album = try? context.fetch(descriptor).first else { return }
-        album.isSelected.toggle()
-        let nowSelected = album.isSelected
-
-        if !nowSelected {
-            for asset in album.assets {
-                context.delete(asset)
-            }
-        }
-
-        try? context.save()
+        let nowSelected = sender.state == .off
         sender.state = nowSelected ? .on : .off
 
-        if nowSelected {
-            Task {
+        Task {
+            let changed = await self.shuffleEngine.setAlbumSelection(forAlbumID: albumID, isSelected: nowSelected)
+            guard changed else { return }
+            if nowSelected {
                 await self.shuffleEngine.syncAssets(forAlbumID: albumID)
+            } else {
+                await self.shuffleEngine.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
             }
         }
     }
@@ -564,7 +527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let accessToken = settings.adobeAccessToken
         let refreshToken = settings.adobeRefreshToken
         let tokenExpiry = settings.adobeTokenExpiry
-        lightroomSignedIn = accessToken != nil
+        lightroomSignedIn = refreshToken != nil || (accessToken != nil && tokenExpiry.map { Date() < $0 } == true)
         Task {
             await AdobeAuthManager.shared.configure(modelContainer: modelContainer)
             await AdobeAuthManager.shared.loadTokens(
@@ -572,6 +535,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 refreshToken: refreshToken,
                 tokenExpiry: tokenExpiry
             )
+            let signedIn = await AdobeAuthManager.shared.isSignedIn
+            await MainActor.run {
+                self.lightroomSignedIn = signedIn
+            }
             autoStartIfNeeded()
         }
     }
@@ -610,6 +577,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             queue: .main
         ) { [weak self] _ in
             self?.shuffleEngine.handleWake()
+        }
+    }
+
+    private func observeActiveSpaceChanges() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.shuffleEngine.handleActiveSpaceChanged()
         }
     }
 }
