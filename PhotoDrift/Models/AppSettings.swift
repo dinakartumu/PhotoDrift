@@ -35,6 +35,12 @@ final class AppSettings {
         set { wallpaperScalingRaw = newValue.rawValue }
     }
 
+    @Transient
+    var applyToAllDesktops: Bool {
+        get { WallpaperTargetPreferences.applyToAllDesktops }
+        set { WallpaperTargetPreferences.applyToAllDesktops = newValue }
+    }
+
     init(
         shuffleIntervalMinutes: Int = 30,
         photosEnabled: Bool = true,
@@ -55,5 +61,22 @@ final class AppSettings {
         let settings = AppSettings()
         context.insert(settings)
         return settings
+    }
+}
+
+enum WallpaperTargetPreferences {
+    static let defaultsKey = "PhotoDrift.applyToAllDesktops"
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [defaultsKey: true])
+    }
+
+    static var applyToAllDesktops: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKey)
+        }
     }
 }

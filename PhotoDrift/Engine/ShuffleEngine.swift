@@ -23,6 +23,9 @@ final class ShuffleEngine {
     private let modelContainer: ModelContainer
     private let unifiedPool: UnifiedPool
     private let photoObserver = PhotoLibraryObserver()
+    private var lastAppliedWallpaperURL: URL?
+    private var lastAppliedWallpaperScaling: WallpaperScaling = .fitToScreen
+    private var lastSpaceReapplyDate: Date = .distantPast
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -36,6 +39,19 @@ final class ShuffleEngine {
 
     func syncAssets(forAlbumID albumID: String) async {
         await unifiedPool.syncAssets(forAlbumID: albumID)
+    }
+
+    func clearAssetsIfAlbumDeselected(forAlbumID albumID: String) async {
+        await unifiedPool.clearAssetsIfAlbumDeselected(forAlbumID: albumID)
+    }
+
+    @discardableResult
+    func setAlbumSelection(forAlbumID albumID: String, isSelected: Bool) async -> Bool {
+        await unifiedPool.setAlbumSelection(forAlbumID: albumID, isSelected: isSelected)
+    }
+
+    func setAlbumsSelection(for source: SourceType, isSelected: Bool) async -> [String] {
+        await unifiedPool.setAlbumsSelection(for: source, isSelected: isSelected)
     }
 
     func start() {
@@ -132,6 +148,7 @@ final class ShuffleEngine {
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
         let scaling = settings.wallpaperScaling
+        let applyToAllDesktops = settings.applyToAllDesktops
 
         var pool: [UnifiedPool.PoolEntry]
         do {
@@ -193,11 +210,17 @@ final class ShuffleEngine {
             let key = ImageCacheManager.cacheKey(for: pick.id)
             if let cached = await ImageCacheManager.shared.retrieve(forKey: key) {
                 let cachedData = try Data(contentsOf: cached)
-                try setWallpaper(imageData: cachedData, rawURL: cached, assetID: pick.id, scaling: scaling)
+                let warning = try setWallpaper(
+                    imageData: cachedData,
+                    rawURL: cached,
+                    assetID: pick.id,
+                    scaling: scaling,
+                    applyToAllDesktops: applyToAllDesktops
+                )
                 addToHistory(pick.id)
                 lastShuffleDate = Date()
                 currentSource = pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
-                statusMessage = nil
+                statusMessage = wallpaperWarningMessage(from: warning)
                 postStateChange()
                 prefetchInBackground(pool: pool)
                 return
@@ -214,16 +237,23 @@ final class ShuffleEngine {
             }
 
             let url = try await ImageCacheManager.shared.store(data: imageData, forKey: key)
-            try setWallpaper(imageData: imageData, rawURL: url, assetID: pick.id, scaling: scaling)
+            let warning = try setWallpaper(
+                imageData: imageData,
+                rawURL: url,
+                assetID: pick.id,
+                scaling: scaling,
+                applyToAllDesktops: applyToAllDesktops
+            )
 
             addToHistory(pick.id)
             lastShuffleDate = Date()
-            statusMessage = nil
+            statusMessage = wallpaperWarningMessage(from: warning)
 
             postStateChange()
             prefetchInBackground(pool: pool)
         } catch let error as AdobeAuthError where error == .noRefreshToken {
             statusMessage = "Lightroom: please sign in again"
+            NotificationCenter.default.post(name: .lightroomAuthStateChanged, object: nil)
             postStateChange()
         } catch is URLError {
             // Network offline — try Photos-only fallback
@@ -233,11 +263,17 @@ final class ShuffleEngine {
                     let data = try await PhotoKitConnector.shared.requestImage(assetID: fallback.id)
                     let key = ImageCacheManager.cacheKey(for: fallback.id)
                     let url = try await ImageCacheManager.shared.store(data: data, forKey: key)
-                    try setWallpaper(imageData: data, rawURL: url, assetID: fallback.id, scaling: scaling)
+                    let warning = try setWallpaper(
+                        imageData: data,
+                        rawURL: url,
+                        assetID: fallback.id,
+                        scaling: scaling,
+                        applyToAllDesktops: applyToAllDesktops
+                    )
                     addToHistory(fallback.id)
                     lastShuffleDate = Date()
                     currentSource = "Photos (offline)"
-                    statusMessage = nil
+                    statusMessage = wallpaperWarningMessage(from: warning)
                 } catch {
                     statusMessage = "Offline, no cached photos available"
                 }
@@ -256,7 +292,13 @@ final class ShuffleEngine {
         return caches.appendingPathComponent("PhotoDriftImages", isDirectory: true)
     }()
 
-    private func setWallpaper(imageData: Data, rawURL: URL, assetID: String, scaling: WallpaperScaling) throws {
+    private func setWallpaper(
+        imageData: Data,
+        rawURL: URL,
+        assetID: String,
+        scaling: WallpaperScaling,
+        applyToAllDesktops: Bool
+    ) throws -> WallpaperService.Warning? {
         if scaling == .fitToScreen {
             let screenSize = ScreenUtility.targetSize
             if let composited = GradientRenderer.composite(imageData: imageData, screenSize: screenSize) {
@@ -264,11 +306,33 @@ final class ShuffleEngine {
                 let name = "gradient_\(key).png"
                 let url = Self.gradientDirectory.appendingPathComponent(name)
                 try composited.write(to: url)
-                try WallpaperService.setWallpaper(from: url, scaling: .fillScreen)
-                return
+                let warning = try WallpaperService.setWallpaper(
+                    from: url,
+                    scaling: .fillScreen,
+                    applyToAllDesktops: applyToAllDesktops
+                )
+                lastAppliedWallpaperURL = url
+                lastAppliedWallpaperScaling = .fillScreen
+                return warning
             }
         }
-        try WallpaperService.setWallpaper(from: rawURL, scaling: scaling)
+        let warning = try WallpaperService.setWallpaper(
+            from: rawURL,
+            scaling: scaling,
+            applyToAllDesktops: applyToAllDesktops
+        )
+        lastAppliedWallpaperURL = rawURL
+        lastAppliedWallpaperScaling = scaling
+        return warning
+    }
+
+    private func wallpaperWarningMessage(from warning: WallpaperService.Warning?) -> String? {
+        guard let warning else { return nil }
+        if let description = warning.errorDescription,
+           let suggestion = warning.recoverySuggestion {
+            return "\(description) \(suggestion)"
+        }
+        return warning.errorDescription
     }
 
     private func postStateChange() {
@@ -277,6 +341,13 @@ final class ShuffleEngine {
 
     private func addToHistory(_ id: String) {
         selection.addToHistory(id)
+    }
+
+    @MainActor
+    func handleLightroomAuthStateChanged(signedIn: Bool) {
+        guard signedIn, statusMessage == "Lightroom: please sign in again" else { return }
+        statusMessage = nil
+        postStateChange()
     }
 
     private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {
@@ -313,6 +384,28 @@ final class ShuffleEngine {
             Task { await shuffleNow() }
         } else {
             scheduleNext()
+        }
+    }
+
+    func handleActiveSpaceChanged() {
+        let context = ModelContext(modelContainer)
+        let settings = AppSettings.current(in: context)
+        guard settings.applyToAllDesktops else { return }
+
+        guard let url = lastAppliedWallpaperURL else { return }
+        // Mission Control gestures can emit back-to-back notifications.
+        guard Date().timeIntervalSince(lastSpaceReapplyDate) > 0.4 else { return }
+        lastSpaceReapplyDate = Date()
+
+        do {
+            _ = try WallpaperService.setWallpaper(
+                from: url,
+                scaling: lastAppliedWallpaperScaling,
+                applyToAllDesktops: false
+            )
+        } catch {
+            statusMessage = "Space change wallpaper apply failed: \(error.localizedDescription)"
+            postStateChange()
         }
     }
 }

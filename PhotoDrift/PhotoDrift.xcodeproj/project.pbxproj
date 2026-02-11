@@ -32,17 +32,17 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		8F7E35002F2CDADE00EAEB39 /* PhotoDrift */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PhotoDrift;
+			path = .;
 			sourceTree = "<group>";
 		};
 		8F7E35102F2CDAE000EAEB39 /* PhotoDriftTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PhotoDriftTests;
+			path = ../PhotoDriftTests;
 			sourceTree = "<group>";
 		};
 		8F7E351A2F2CDAE000EAEB39 /* PhotoDriftUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PhotoDriftUITests;
+			path = ../PhotoDriftUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -413,7 +413,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = myactivities.dinakartumu.com.PhotoDrift2;
+				PRODUCT_BUNDLE_IDENTIFIER = myactivities.dinakartumu.com.PhotoDrift;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -449,7 +449,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = myactivities.dinakartumu.com.PhotoDrift2;
+				PRODUCT_BUNDLE_IDENTIFIER = myactivities.dinakartumu.com.PhotoDrift;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
