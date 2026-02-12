@@ -152,7 +152,7 @@ final class SettingsTabViewController: NSTabViewController {
 }
 
 final class GeneralSettingsViewController: NSViewController {
-    static let preferredContentSize = NSSize(width: 500, height: 320)
+    static let preferredContentSize = NSSize(width: 500, height: 350)
     private let context: ModelContext
     private var settings: AppSettings!
 
@@ -168,6 +168,8 @@ final class GeneralSettingsViewController: NSViewController {
     private var launchAtLoginCheckbox: NSButton!
     private var scalingPopup: NSPopUpButton!
     private var applyAllDesktopsCheckbox: NSButton!
+    private var animateGradientCheckbox: NSButton!
+    private var liveDesktopLayerCheckbox: NSButton!
 
     init(modelContainer: ModelContainer) {
         self.context = ModelContext(modelContainer)
@@ -223,12 +225,24 @@ final class GeneralSettingsViewController: NSViewController {
             target: self,
             action: #selector(applyAllDesktopsToggled(_:))
         )
+        animateGradientCheckbox = NSButton(
+            checkboxWithTitle: "Animate gradient matte (Fit to Screen only)",
+            target: self,
+            action: #selector(animateGradientToggled(_:))
+        )
+        liveDesktopLayerCheckbox = NSButton(
+            checkboxWithTitle: "Use live desktop layer (experimental)",
+            target: self,
+            action: #selector(liveDesktopLayerToggled(_:))
+        )
         let startupGrid = makeFormGrid(rows: [("Startup:", launchAtLoginCheckbox)])
         let shuffleGrid = makeFormGrid(rows: [("Shuffle Interval:", radioStack)])
         let wallpaperGrid = makeFormGrid(
             rows: [
                 ("Scaling:", scalingPopup),
                 ("Target:", applyAllDesktopsCheckbox),
+                ("Gradient:", animateGradientCheckbox),
+                ("Rendering:", liveDesktopLayerCheckbox),
             ],
             fillControlColumn: true
         )
@@ -269,6 +283,8 @@ final class GeneralSettingsViewController: NSViewController {
         }
 
         applyAllDesktopsCheckbox.state = settings.applyToAllDesktops ? .on : .off
+        animateGradientCheckbox.state = settings.animateGradientMatte ? .on : .off
+        liveDesktopLayerCheckbox.state = settings.useLiveDesktopLayer ? .on : .off
     }
 
     @objc private func intervalChanged(_ sender: NSButton) {
@@ -301,6 +317,16 @@ final class GeneralSettingsViewController: NSViewController {
 
     @objc private func applyAllDesktopsToggled(_ sender: NSButton) {
         settings.applyToAllDesktops = sender.state == .on
+        save()
+    }
+
+    @objc private func animateGradientToggled(_ sender: NSButton) {
+        settings.animateGradientMatte = sender.state == .on
+        save()
+    }
+
+    @objc private func liveDesktopLayerToggled(_ sender: NSButton) {
+        settings.useLiveDesktopLayer = sender.state == .on
         save()
     }
 

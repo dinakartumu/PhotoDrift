@@ -19,7 +19,7 @@ enum PaletteExtractor {
         guard let pixelData = pixelBuffer(from: thumbnail, width: width, height: height) else { return nil }
 
         let buckets = bucketByHue(pixelData: pixelData, width: width, height: height)
-        return paletteFromBuckets(buckets)
+        return paletteFromBuckets(buckets, pixelData: pixelData, width: width, height: height)
     }
 
     // MARK: - Downsampling
@@ -106,7 +106,12 @@ enum PaletteExtractor {
 
     // MARK: - Palette generation
 
-    private static func paletteFromBuckets(_ buckets: [HueBucket]) -> GradientPalette {
+    private static func paletteFromBuckets(
+        _ buckets: [HueBucket],
+        pixelData: [UInt8],
+        width: Int,
+        height: Int
+    ) -> GradientPalette {
         let sorted = buckets.enumerated()
             .filter { $0.element.count > 0 }
             .sorted { $0.element.count > $1.element.count }
@@ -122,32 +127,88 @@ enum PaletteExtractor {
         } else if sorted.count == 1 {
             let top = sorted[0].element
             baseColor = (top.averageR, top.averageG, top.averageB)
-            // Derive secondary by darkening
-            secondaryColor = (baseColor.r * 0.5, baseColor.g * 0.5, baseColor.b * 0.5)
+            // Derive a second tone; keep grayscale images neutral.
+            let (h, s, bri) = rgbToHSB(r: baseColor.r, g: baseColor.g, b: baseColor.b)
+            let shiftedHue = s > 0.10 ? (h + 0.06).truncatingRemainder(dividingBy: 1.0) : h
+            let boostedSat = min(max(s * 1.15, 0.0), 0.90)
+            let shiftedBri = min(max(bri * 0.82, 0.28), 0.90)
+            secondaryColor = hsbToRGB(h: shiftedHue, s: boostedSat, b: shiftedBri)
         } else {
-            // No colorful pixels — use a neutral dark gradient
-            return GradientPalette(
-                topColor: CGColor(red: 0.15, green: 0.15, blue: 0.18, alpha: 1),
-                bottomColor: CGColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1)
+            // No colorful buckets survived filters; derive neutral tones from image average.
+            let avg = averageColor(pixelData: pixelData, width: width, height: height)
+            let top = clampedColor(
+                r: avg.r,
+                g: avg.g,
+                b: avg.b,
+                brightnessScale: 0.95,
+                saturationBoost: 1.0
             )
+            let bottom = clampedColor(
+                r: avg.r,
+                g: avg.g,
+                b: avg.b,
+                brightnessScale: 0.56,
+                saturationBoost: 1.0
+            )
+            return GradientPalette(topColor: top, bottomColor: bottom)
         }
 
-        let top = clampedColor(r: baseColor.r, g: baseColor.g, b: baseColor.b, darken: 0.6)
-        let bottom = clampedColor(r: secondaryColor.r, g: secondaryColor.g, b: secondaryColor.b, darken: 1.0)
+        let top = clampedColor(
+            r: baseColor.r,
+            g: baseColor.g,
+            b: baseColor.b,
+            brightnessScale: 1.00,
+            saturationBoost: 1.12
+        )
+        let bottom = clampedColor(
+            r: secondaryColor.r,
+            g: secondaryColor.g,
+            b: secondaryColor.b,
+            brightnessScale: 0.78,
+            saturationBoost: 1.08
+        )
 
         return GradientPalette(topColor: top, bottomColor: bottom)
     }
 
     // MARK: - Color math
 
-    private static func clampedColor(r: Double, g: Double, b: Double, darken: Double) -> CGColor {
+    private static func clampedColor(
+        r: Double,
+        g: Double,
+        b: Double,
+        brightnessScale: Double,
+        saturationBoost: Double
+    ) -> CGColor {
         var (h, s, bri) = rgbToHSB(r: r, g: g, b: b)
-        s = min(s, 0.65)
-        bri = min(max(bri, 0.18), 0.75)
-        bri *= darken
-        bri = min(max(bri, 0.08), 0.75)
+        s = min(max(s * saturationBoost, 0.0), 0.95)
+        bri = min(max(bri, 0.34), 0.95)
+        bri *= brightnessScale
+        bri = min(max(bri, 0.22), 0.95)
         let (cr, cg, cb) = hsbToRGB(h: h, s: s, b: bri)
         return CGColor(red: cr, green: cg, blue: cb, alpha: 1)
+    }
+
+    private static func averageColor(pixelData: [UInt8], width: Int, height: Int) -> (r: Double, g: Double, b: Double) {
+        let bytesPerPixel = 4
+        let rowStride = width * bytesPerPixel
+        var totalR: Double = 0
+        var totalG: Double = 0
+        var totalB: Double = 0
+        var count: Double = 0
+
+        for y in stride(from: 0, to: height, by: 2) {
+            for x in stride(from: 0, to: width, by: 2) {
+                let offset = y * rowStride + x * bytesPerPixel
+                totalR += Double(pixelData[offset]) / 255.0
+                totalG += Double(pixelData[offset + 1]) / 255.0
+                totalB += Double(pixelData[offset + 2]) / 255.0
+                count += 1
+            }
+        }
+
+        guard count > 0 else { return (0.5, 0.5, 0.5) }
+        return (totalR / count, totalG / count, totalB / count)
     }
 
     static func rgbToHSB(r: Double, g: Double, b: Double) -> (h: Double, s: Double, b: Double) {

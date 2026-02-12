@@ -9,6 +9,8 @@ A macOS menu bar app that automatically shuffles your desktop wallpaper using ph
 - **Adobe Lightroom integration** -- connect your Lightroom cloud account and pull from Lightroom albums
 - **Automatic shuffling** -- set an interval (15 min to 4 hours) and wallpapers change automatically
 - **Wallpaper scaling** -- Fill, Fit, Stretch, Center, or Tile display modes
+- **Animated gradient matte** -- optional subtle motion behind Fit-to-Screen wallpapers
+- **Live desktop layer (experimental)** -- smooth, real-time animated gradient/image rendering
 - **Multi-album support** -- select multiple albums from both sources to build a combined pool
 - **Smart caching** -- images are cached locally and prefetched in the background
 - **Offline fallback** -- falls back to Photos library when network is unavailable

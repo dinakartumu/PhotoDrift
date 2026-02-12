@@ -41,6 +41,18 @@ final class AppSettings {
         set { WallpaperTargetPreferences.applyToAllDesktops = newValue }
     }
 
+    @Transient
+    var animateGradientMatte: Bool {
+        get { WallpaperGradientAnimationPreferences.isEnabled }
+        set { WallpaperGradientAnimationPreferences.isEnabled = newValue }
+    }
+
+    @Transient
+    var useLiveDesktopLayer: Bool {
+        get { WallpaperLiveLayerPreferences.isEnabled }
+        set { WallpaperLiveLayerPreferences.isEnabled = newValue }
+    }
+
     init(
         shuffleIntervalMinutes: Int = 30,
         photosEnabled: Bool = true,
@@ -72,6 +84,40 @@ enum WallpaperTargetPreferences {
     }
 
     static var applyToAllDesktops: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKey)
+        }
+    }
+}
+
+enum WallpaperGradientAnimationPreferences {
+    static let defaultsKey = "PhotoDrift.animateGradientMatte"
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [defaultsKey: false])
+    }
+
+    static var isEnabled: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKey)
+        }
+    }
+}
+
+enum WallpaperLiveLayerPreferences {
+    static let defaultsKey = "PhotoDrift.useLiveDesktopLayer"
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [defaultsKey: false])
+    }
+
+    static var isEnabled: Bool {
         get {
             UserDefaults.standard.bool(forKey: defaultsKey)
         }
