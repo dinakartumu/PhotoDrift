@@ -152,7 +152,7 @@ final class SettingsTabViewController: NSTabViewController {
 }
 
 final class GeneralSettingsViewController: NSViewController {
-    static let preferredContentSize = NSSize(width: 500, height: 350)
+    static let preferredContentSize = NSSize(width: 500, height: 330)
     private let context: ModelContext
     private var settings: AppSettings!
 
@@ -168,7 +168,6 @@ final class GeneralSettingsViewController: NSViewController {
     private var launchAtLoginCheckbox: NSButton!
     private var scalingPopup: NSPopUpButton!
     private var applyAllDesktopsCheckbox: NSButton!
-    private var animateGradientCheckbox: NSButton!
     private var liveDesktopLayerCheckbox: NSButton!
 
     init(modelContainer: ModelContainer) {
@@ -225,11 +224,6 @@ final class GeneralSettingsViewController: NSViewController {
             target: self,
             action: #selector(applyAllDesktopsToggled(_:))
         )
-        animateGradientCheckbox = NSButton(
-            checkboxWithTitle: "Animate gradient matte (Fit to Screen only)",
-            target: self,
-            action: #selector(animateGradientToggled(_:))
-        )
         liveDesktopLayerCheckbox = NSButton(
             checkboxWithTitle: "Use live desktop layer (experimental)",
             target: self,
@@ -241,7 +235,6 @@ final class GeneralSettingsViewController: NSViewController {
             rows: [
                 ("Scaling:", scalingPopup),
                 ("Target:", applyAllDesktopsCheckbox),
-                ("Gradient:", animateGradientCheckbox),
                 ("Rendering:", liveDesktopLayerCheckbox),
             ],
             fillControlColumn: true
@@ -283,7 +276,6 @@ final class GeneralSettingsViewController: NSViewController {
         }
 
         applyAllDesktopsCheckbox.state = settings.applyToAllDesktops ? .on : .off
-        animateGradientCheckbox.state = settings.animateGradientMatte ? .on : .off
         liveDesktopLayerCheckbox.state = settings.useLiveDesktopLayer ? .on : .off
     }
 
@@ -317,11 +309,6 @@ final class GeneralSettingsViewController: NSViewController {
 
     @objc private func applyAllDesktopsToggled(_ sender: NSButton) {
         settings.applyToAllDesktops = sender.state == .on
-        save()
-    }
-
-    @objc private func animateGradientToggled(_ sender: NSButton) {
-        settings.animateGradientMatte = sender.state == .on
         save()
     }
 

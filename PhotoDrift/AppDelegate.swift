@@ -19,7 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         WallpaperTargetPreferences.registerDefaults()
-        WallpaperGradientAnimationPreferences.registerDefaults()
         WallpaperLiveLayerPreferences.registerDefaults()
 
         let schema = Schema([Album.self, Asset.self, AppSettings.self])
