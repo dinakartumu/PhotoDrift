@@ -227,6 +227,19 @@ struct GradientRendererTests {
         #expect(result != nil)
     }
 
+    @Test func animatedGradientFramesDifferAcrossPhases() {
+        guard let jpeg = makeTestJPEG(width: 100, height: 200, r: 0.3, g: 0.4, b: 0.8) else {
+            Issue.record("Failed to create test JPEG")
+            return
+        }
+        let screenSize = CGSize(width: 800, height: 600)
+        let phaseA = GradientRenderer.composite(imageData: jpeg, screenSize: screenSize, phase: 0.0)
+        let phaseB = GradientRenderer.composite(imageData: jpeg, screenSize: screenSize, phase: 0.5)
+        #expect(phaseA != nil)
+        #expect(phaseB != nil)
+        #expect(phaseA != phaseB)
+    }
+
     @Test func returnsNilForInvalidData() {
         let garbage = Data([0xFF, 0xFE, 0xFD])
         let result = GradientRenderer.composite(imageData: garbage, screenSize: CGSize(width: 800, height: 600))
