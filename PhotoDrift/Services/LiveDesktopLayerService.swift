@@ -165,6 +165,10 @@ private final class LiveDesktopLayerView: NSView {
 
     private let gradientLayer = CAGradientLayer()
     private let glowLayer = CAGradientLayer()
+    private let waveLayerFar = CAGradientLayer()
+    private let waveLayerNear = CAGradientLayer()
+    private let waveMaskFar = CAShapeLayer()
+    private let waveMaskNear = CAShapeLayer()
     private let imageLayer = CALayer()
 
     private var palette: GradientPalette?
@@ -185,6 +189,10 @@ private final class LiveDesktopLayerView: NSView {
         layer?.contentsScale = scale
         gradientLayer.contentsScale = scale
         glowLayer.contentsScale = scale
+        waveLayerFar.contentsScale = scale
+        waveLayerNear.contentsScale = scale
+        waveMaskFar.contentsScale = scale
+        waveMaskNear.contentsScale = scale
         imageLayer.contentsScale = scale
     }
 
@@ -192,7 +200,30 @@ private final class LiveDesktopLayerView: NSView {
         super.layout()
         gradientLayer.frame = bounds
         glowLayer.frame = bounds
+        waveLayerFar.frame = bounds
+        waveLayerNear.frame = bounds
         imageLayer.frame = bounds
+
+        waveMaskFar.frame = bounds
+        waveMaskNear.frame = bounds
+        if !bounds.isEmpty {
+            waveMaskFar.path = waveRibbonPath(
+                in: bounds,
+                phase: 0,
+                baseline: 0.44,
+                amplitude: 0.032,
+                wavelength: 0.62,
+                thickness: 0.16
+            )
+            waveMaskNear.path = waveRibbonPath(
+                in: bounds,
+                phase: 0.2,
+                baseline: 0.62,
+                amplitude: 0.048,
+                wavelength: 0.72,
+                thickness: 0.22
+            )
+        }
     }
 
     func render(image: CGImage, palette: GradientPalette, animateGradient: Bool) {
@@ -202,7 +233,7 @@ private final class LiveDesktopLayerView: NSView {
         imageLayer.contentsGravity = .resizeAspect
 
         applyStops(phase: 0)
-        updateAnimation(enabled: animateGradient)
+        updateAnimation(enabled: animateGradient, refreshTimeline: true)
     }
 
     private func setupLayers() {
@@ -224,6 +255,18 @@ private final class LiveDesktopLayerView: NSView {
         glowLayer.endPoint = CGPoint(x: 1.00, y: 1.00)
         root.addSublayer(glowLayer)
 
+        waveLayerFar.frame = bounds
+        waveLayerFar.startPoint = CGPoint(x: 0, y: 0.5)
+        waveLayerFar.endPoint = CGPoint(x: 1, y: 0.5)
+        waveLayerFar.mask = waveMaskFar
+        root.addSublayer(waveLayerFar)
+
+        waveLayerNear.frame = bounds
+        waveLayerNear.startPoint = CGPoint(x: 0, y: 0.5)
+        waveLayerNear.endPoint = CGPoint(x: 1, y: 0.5)
+        waveLayerNear.mask = waveMaskNear
+        root.addSublayer(waveLayerNear)
+
         imageLayer.frame = bounds
         imageLayer.magnificationFilter = .trilinear
         imageLayer.minificationFilter = .trilinear
@@ -231,20 +274,28 @@ private final class LiveDesktopLayerView: NSView {
         root.addSublayer(imageLayer)
     }
 
-    private func updateAnimation(enabled: Bool) {
-        guard enabled != isAnimating else { return }
+    private func updateAnimation(enabled: Bool, refreshTimeline: Bool = false) {
+        guard enabled != isAnimating || refreshTimeline else { return }
         isAnimating = enabled
 
         gradientLayer.removeAllAnimations()
         glowLayer.removeAllAnimations()
+        waveLayerFar.removeAllAnimations()
+        waveLayerNear.removeAllAnimations()
+        waveMaskFar.removeAllAnimations()
+        waveMaskNear.removeAllAnimations()
 
         guard enabled, let palette else {
             gradientLayer.startPoint = CGPoint(x: 0.08, y: 0.18)
             gradientLayer.endPoint = CGPoint(x: 0.92, y: 0.82)
             glowLayer.startPoint = CGPoint(x: 0.30, y: 0.30)
             glowLayer.endPoint = CGPoint(x: 1.00, y: 1.00)
+            waveLayerFar.opacity = 0
+            waveLayerNear.opacity = 0
             return
         }
+
+        installWaveAnimations()
 
         let axisStart = CABasicAnimation(keyPath: "startPoint")
         axisStart.fromValue = NSValue(point: CGPoint(x: 0.07, y: 0.16))
@@ -298,6 +349,71 @@ private final class LiveDesktopLayerView: NSView {
         glowLayer.add(glowEnd, forKey: "glowEndPoint")
     }
 
+    private func installWaveAnimations() {
+        guard !bounds.isEmpty else { return }
+
+        waveLayerFar.opacity = 0.48
+        waveLayerNear.opacity = 0.62
+
+        let farPhases: [CGFloat] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        let farPaths: [CGPath] = farPhases.map { phase in
+            waveRibbonPath(
+                in: bounds,
+                phase: phase,
+                baseline: 0.44,
+                amplitude: 0.032,
+                wavelength: 0.62,
+                thickness: 0.16
+            )
+        }
+        let farAnimation = CAKeyframeAnimation(keyPath: "path")
+        farAnimation.values = farPaths
+        farAnimation.keyTimes = farPhases.map { NSNumber(value: Double($0)) }
+        farAnimation.duration = 20
+        farAnimation.repeatCount = .infinity
+        farAnimation.calculationMode = .linear
+        farAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+        waveMaskFar.add(farAnimation, forKey: "wavePath")
+
+        let nearPhases: [CGFloat] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        let nearPaths: [CGPath] = nearPhases.map { phase in
+            waveRibbonPath(
+                in: bounds,
+                phase: phase + 0.3,
+                baseline: 0.62,
+                amplitude: 0.048,
+                wavelength: 0.72,
+                thickness: 0.22
+            )
+        }
+        let nearAnimation = CAKeyframeAnimation(keyPath: "path")
+        nearAnimation.values = nearPaths
+        nearAnimation.keyTimes = nearPhases.map { NSNumber(value: Double($0)) }
+        nearAnimation.duration = 13
+        nearAnimation.repeatCount = .infinity
+        nearAnimation.calculationMode = .linear
+        nearAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
+        waveMaskNear.add(nearAnimation, forKey: "wavePath")
+
+        let nearOpacity = CABasicAnimation(keyPath: "opacity")
+        nearOpacity.fromValue = 0.50
+        nearOpacity.toValue = 0.68
+        nearOpacity.duration = 6
+        nearOpacity.autoreverses = true
+        nearOpacity.repeatCount = .infinity
+        nearOpacity.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        waveLayerNear.add(nearOpacity, forKey: "breath")
+
+        let farOpacity = CABasicAnimation(keyPath: "opacity")
+        farOpacity.fromValue = 0.38
+        farOpacity.toValue = 0.52
+        farOpacity.duration = 8
+        farOpacity.autoreverses = true
+        farOpacity.repeatCount = .infinity
+        farOpacity.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        waveLayerFar.add(farOpacity, forKey: "breath")
+    }
+
     private func applyStops(phase: CGFloat) {
         guard let palette else { return }
         let stops = vibrantStops(from: palette, phase: phase)
@@ -311,6 +427,22 @@ private final class LiveDesktopLayerView: NSView {
             withAlpha(stops.deep, alpha: 0.0),
         ]
         glowLayer.locations = [0.0, 0.45, 1.0]
+
+        waveLayerFar.colors = [
+            withAlpha(stops.base, alpha: 0.0),
+            withAlpha(stops.accent, alpha: 0.20),
+            withAlpha(stops.highlight, alpha: 0.34),
+            withAlpha(stops.base, alpha: 0.0),
+        ]
+        waveLayerFar.locations = [0.0, 0.38, 0.62, 1.0]
+
+        waveLayerNear.colors = [
+            withAlpha(stops.deep, alpha: 0.0),
+            withAlpha(stops.accent, alpha: 0.24),
+            withAlpha(stops.highlight, alpha: 0.40),
+            withAlpha(stops.deep, alpha: 0.0),
+        ]
+        waveLayerNear.locations = [0.0, 0.35, 0.65, 1.0]
     }
 
     private func vibrantStops(from palette: GradientPalette, phase: CGFloat) -> VibrantStops {
@@ -397,5 +529,46 @@ private final class LiveDesktopLayerView: NSView {
             return (components[0], components[0], components[0], components[1])
         }
         return (0, 0, 0, 1)
+    }
+
+    private func waveRibbonPath(
+        in rect: CGRect,
+        phase: CGFloat,
+        baseline: CGFloat,
+        amplitude: CGFloat,
+        wavelength: CGFloat,
+        thickness: CGFloat
+    ) -> CGPath {
+        let width = rect.width
+        let height = rect.height
+        let yBase = height * baseline
+        let amp = height * amplitude
+        let band = height * thickness
+        let waveLength = max(80, width * wavelength)
+        let step = max(6, width / 96)
+
+        let path = CGMutablePath()
+        var x: CGFloat = 0
+
+        let startY = yBase + sin((phase * .pi * 2)) * amp
+        path.move(to: CGPoint(x: 0, y: startY))
+
+        while x <= width {
+            let progress = (x / waveLength) * .pi * 2 + (phase * .pi * 2)
+            let y = yBase + sin(progress) * amp
+            path.addLine(to: CGPoint(x: x, y: y))
+            x += step
+        }
+        path.addLine(to: CGPoint(x: width, y: yBase + sin((width / waveLength) * .pi * 2 + phase * .pi * 2) * amp + band))
+
+        var reverseX = width
+        while reverseX >= 0 {
+            let progress = (reverseX / waveLength) * .pi * 2 + (phase * .pi * 2)
+            let y = yBase + sin(progress) * amp + band
+            path.addLine(to: CGPoint(x: reverseX, y: y))
+            reverseX -= step
+        }
+        path.closeSubpath()
+        return path
     }
 }
