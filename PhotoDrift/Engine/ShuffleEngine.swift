@@ -10,13 +10,6 @@ extension Notification.Name {
 }
 
 final class ShuffleEngine {
-    private struct GradientAnimationState {
-        let imageData: Data
-        let assetID: String
-        var phase: CGFloat
-        var frameIndex: Int
-    }
-
     private(set) var isRunning = false
     private(set) var lastShuffleDate: Date?
     private(set) var nextShuffleDate: Date?
@@ -34,11 +27,6 @@ final class ShuffleEngine {
     private var lastAppliedWallpaperScaling: WallpaperScaling = .fitToScreen
     private var lastSpaceReapplyDate: Date = .distantPast
     private var isLiveDesktopLayerActive = false
-    private var gradientAnimationState: GradientAnimationState?
-    private var gradientAnimationCancellable: AnyCancellable?
-
-    private static let gradientAnimationFrameInterval: TimeInterval = 0.2
-    private static let gradientAnimationPhaseStep: CGFloat = 0.011
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -93,7 +81,6 @@ final class ShuffleEngine {
         timerCancellable?.cancel()
         timerCancellable = nil
         nextShuffleDate = nil
-        stopGradientAnimation()
         stopObservers()
         postStateChange()
     }
@@ -163,7 +150,6 @@ final class ShuffleEngine {
         let settings = AppSettings.current(in: context)
         let scaling = settings.wallpaperScaling
         let applyToAllDesktops = settings.applyToAllDesktops
-        let animateGradientMatte = settings.animateGradientMatte
         let useLiveDesktopLayer = settings.useLiveDesktopLayer
 
         var pool: [UnifiedPool.PoolEntry]
@@ -231,7 +217,6 @@ final class ShuffleEngine {
                     rawURL: cached,
                     assetID: pick.id,
                     scaling: scaling,
-                    animateGradientMatte: animateGradientMatte,
                     useLiveDesktopLayer: useLiveDesktopLayer,
                     applyToAllDesktops: applyToAllDesktops
                 )
@@ -260,7 +245,6 @@ final class ShuffleEngine {
                 rawURL: url,
                 assetID: pick.id,
                 scaling: scaling,
-                animateGradientMatte: animateGradientMatte,
                 useLiveDesktopLayer: useLiveDesktopLayer,
                 applyToAllDesktops: applyToAllDesktops
             )
@@ -288,7 +272,6 @@ final class ShuffleEngine {
                         rawURL: url,
                         assetID: fallback.id,
                         scaling: scaling,
-                        animateGradientMatte: animateGradientMatte,
                         useLiveDesktopLayer: useLiveDesktopLayer,
                         applyToAllDesktops: applyToAllDesktops
                     )
@@ -319,16 +302,14 @@ final class ShuffleEngine {
         rawURL: URL,
         assetID: String,
         scaling: WallpaperScaling,
-        animateGradientMatte: Bool,
         useLiveDesktopLayer: Bool,
         applyToAllDesktops: Bool
     ) throws -> WallpaperService.Warning? {
         if scaling == .fitToScreen {
             if useLiveDesktopLayer {
-                stopGradientAnimation()
                 try LiveDesktopLayerService.shared.present(
                     imageData: imageData,
-                    animateGradient: animateGradientMatte
+                    animateGradient: true
                 )
                 isLiveDesktopLayerActive = true
                 lastAppliedWallpaperURL = nil
@@ -341,15 +322,6 @@ final class ShuffleEngine {
                 isLiveDesktopLayerActive = false
             }
 
-            if animateGradientMatte,
-               let warning = try setAnimatedGradientWallpaper(
-                imageData: imageData,
-                assetID: assetID,
-                applyToAllDesktops: applyToAllDesktops
-               ) {
-                return warning
-            }
-            stopGradientAnimation()
             if let warning = try setStaticGradientWallpaper(imageData: imageData, assetID: assetID, applyToAllDesktops: applyToAllDesktops) {
                 return warning
             }
@@ -359,7 +331,6 @@ final class ShuffleEngine {
             LiveDesktopLayerService.shared.hide()
             isLiveDesktopLayerActive = false
         }
-        stopGradientAnimation()
         let warning = try WallpaperService.setWallpaper(
             from: rawURL,
             scaling: scaling,
@@ -394,45 +365,6 @@ final class ShuffleEngine {
         return applyToAllDesktops ? .gradientMatteCurrentSpaceOnly : nil
     }
 
-    private func setAnimatedGradientWallpaper(
-        imageData: Data,
-        assetID: String,
-        applyToAllDesktops: Bool
-    ) throws -> WallpaperService.Warning? {
-        let screenSize = ScreenUtility.targetSize
-        guard let firstFrame = GradientRenderer.composite(
-            imageData: imageData,
-            screenSize: screenSize,
-            phase: 0
-        ) else {
-            return nil
-        }
-
-        stopGradientAnimation()
-        try ensureGradientDirectoryExists()
-
-        let key = ImageCacheManager.cacheKey(for: assetID)
-        let firstFrameURL = Self.gradientDirectory.appendingPathComponent("animated_\(key)_0.png")
-        try firstFrame.write(to: firstFrameURL, options: .atomic)
-
-        _ = try WallpaperService.setWallpaper(
-            from: firstFrameURL,
-            scaling: .fillScreen,
-            applyToAllDesktops: false
-        )
-
-        lastAppliedWallpaperURL = firstFrameURL
-        lastAppliedWallpaperScaling = .fillScreen
-        gradientAnimationState = GradientAnimationState(
-            imageData: imageData,
-            assetID: assetID,
-            phase: 0,
-            frameIndex: 0
-        )
-        startGradientAnimation()
-        return applyToAllDesktops ? .gradientMatteCurrentSpaceOnly : nil
-    }
-
     private func ensureGradientDirectoryExists() throws {
         try FileManager.default.createDirectory(
             at: Self.gradientDirectory,
@@ -455,69 +387,6 @@ final class ShuffleEngine {
 
     private func addToHistory(_ id: String) {
         selection.addToHistory(id)
-    }
-
-    private func startGradientAnimation() {
-        gradientAnimationCancellable?.cancel()
-        gradientAnimationCancellable = Timer.publish(
-            every: Self.gradientAnimationFrameInterval,
-            on: .main,
-            in: .common
-        )
-        .autoconnect()
-        .sink { [weak self] _ in
-            self?.renderNextGradientAnimationFrameIfNeeded()
-        }
-    }
-
-    private func stopGradientAnimation() {
-        gradientAnimationCancellable?.cancel()
-        gradientAnimationCancellable = nil
-        gradientAnimationState = nil
-    }
-
-    private func renderNextGradientAnimationFrameIfNeeded() {
-        guard var state = gradientAnimationState else { return }
-        let context = ModelContext(modelContainer)
-        let settings = AppSettings.current(in: context)
-        guard settings.animateGradientMatte, settings.wallpaperScaling == .fitToScreen else {
-            stopGradientAnimation()
-            return
-        }
-
-        state.frameIndex += 1
-        state.phase = (state.phase + Self.gradientAnimationPhaseStep)
-            .truncatingRemainder(dividingBy: 1)
-
-        let screenSize = ScreenUtility.targetSize
-        guard let nextFrame = GradientRenderer.composite(
-            imageData: state.imageData,
-            screenSize: screenSize,
-            phase: state.phase
-        ) else {
-            stopGradientAnimation()
-            return
-        }
-
-        do {
-            try ensureGradientDirectoryExists()
-            let key = ImageCacheManager.cacheKey(for: state.assetID)
-            let suffix = state.frameIndex % 2
-            let nextURL = Self.gradientDirectory.appendingPathComponent("animated_\(key)_\(suffix).png")
-            try nextFrame.write(to: nextURL)
-            _ = try WallpaperService.setWallpaper(
-                from: nextURL,
-                scaling: .fillScreen,
-                applyToAllDesktops: false
-            )
-            lastAppliedWallpaperURL = nextURL
-            lastAppliedWallpaperScaling = .fillScreen
-            gradientAnimationState = state
-        } catch {
-            stopGradientAnimation()
-            statusMessage = "Gradient animation paused: \(error.localizedDescription)"
-            postStateChange()
-        }
     }
 
     @MainActor
