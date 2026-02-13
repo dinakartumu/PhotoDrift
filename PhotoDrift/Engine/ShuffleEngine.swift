@@ -151,6 +151,7 @@ final class ShuffleEngine {
         let scaling = settings.wallpaperScaling
         let applyToAllDesktops = settings.applyToAllDesktops
         let useLiveDesktopLayer = settings.useLiveDesktopLayer
+        let liveGradientMotionEffect = settings.liveGradientMotionEffect
 
         var pool: [UnifiedPool.PoolEntry]
         do {
@@ -218,6 +219,7 @@ final class ShuffleEngine {
                     assetID: pick.id,
                     scaling: scaling,
                     useLiveDesktopLayer: useLiveDesktopLayer,
+                    liveGradientMotionEffect: liveGradientMotionEffect,
                     applyToAllDesktops: applyToAllDesktops
                 )
                 addToHistory(pick.id)
@@ -246,6 +248,7 @@ final class ShuffleEngine {
                 assetID: pick.id,
                 scaling: scaling,
                 useLiveDesktopLayer: useLiveDesktopLayer,
+                liveGradientMotionEffect: liveGradientMotionEffect,
                 applyToAllDesktops: applyToAllDesktops
             )
 
@@ -273,6 +276,7 @@ final class ShuffleEngine {
                         assetID: fallback.id,
                         scaling: scaling,
                         useLiveDesktopLayer: useLiveDesktopLayer,
+                        liveGradientMotionEffect: liveGradientMotionEffect,
                         applyToAllDesktops: applyToAllDesktops
                     )
                     addToHistory(fallback.id)
@@ -303,6 +307,7 @@ final class ShuffleEngine {
         assetID: String,
         scaling: WallpaperScaling,
         useLiveDesktopLayer: Bool,
+        liveGradientMotionEffect: LiveGradientMotionEffect,
         applyToAllDesktops: Bool
     ) throws -> WallpaperService.Warning? {
         if let applied = try setStaticGradientWallpaper(
@@ -314,7 +319,8 @@ final class ShuffleEngine {
             if useLiveDesktopLayer {
                 try LiveDesktopLayerService.shared.present(
                     imageData: imageData,
-                    animateGradient: true
+                    animateGradient: true,
+                    motionEffect: liveGradientMotionEffect
                 )
                 isLiveDesktopLayerActive = true
             } else if isLiveDesktopLayerActive {
@@ -335,7 +341,8 @@ final class ShuffleEngine {
             lastAppliedWallpaperScaling = scaling
             try LiveDesktopLayerService.shared.present(
                 imageData: imageData,
-                animateGradient: true
+                animateGradient: true,
+                motionEffect: liveGradientMotionEffect
             )
             isLiveDesktopLayerActive = true
             return applyToAllDesktops ? .liveLayerCurrentSpaceOnly : nil

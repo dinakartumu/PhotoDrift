@@ -20,6 +20,7 @@ final class LiveDesktopLayerService {
         let image: CGImage
         let palette: GradientPalette
         let animateGradient: Bool
+        let motionEffect: LiveGradientMotionEffect
     }
 
     private var windowsByDisplayID: [CGDirectDisplayID: NSWindow] = [:]
@@ -29,7 +30,11 @@ final class LiveDesktopLayerService {
 
     private init() {}
 
-    func present(imageData: Data, animateGradient: Bool) throws {
+    func present(
+        imageData: Data,
+        animateGradient: Bool,
+        motionEffect: LiveGradientMotionEffect
+    ) throws {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw ServiceError.invalidImageData
@@ -44,7 +49,12 @@ final class LiveDesktopLayerService {
         // Non-critical cache for future screensaver/live-session handoff.
         try? SharedWallpaperSnapshotStore.shared.save(imageData: imageData, palette: palette)
 
-        contentState = ContentState(image: image, palette: palette, animateGradient: animateGradient)
+        contentState = ContentState(
+            image: image,
+            palette: palette,
+            animateGradient: animateGradient,
+            motionEffect: motionEffect
+        )
         ensureScreenObserver()
         syncWindowsToCurrentScreens()
         applyCurrentState()
@@ -136,7 +146,8 @@ final class LiveDesktopLayerService {
             view.render(
                 image: contentState.image,
                 palette: contentState.palette,
-                animateGradient: contentState.animateGradient
+                animateGradient: contentState.animateGradient,
+                motionEffect: contentState.motionEffect
             )
         }
     }

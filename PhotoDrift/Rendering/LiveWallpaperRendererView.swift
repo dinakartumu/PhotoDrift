@@ -19,6 +19,14 @@ final class LiveWallpaperRendererView: NSView {
 
     private var palette: GradientPalette?
     private var isAnimating = false
+    private var currentMotionEffect: LiveGradientMotionEffect = .mediumLoops
+
+    private struct MotionProfile {
+        let farDuration: CFTimeInterval
+        let nearDuration: CFTimeInterval
+        let nearOpacityRange: ClosedRange<Float>
+        let farOpacityRange: ClosedRange<Float>
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -59,7 +67,8 @@ final class LiveWallpaperRendererView: NSView {
                 baseline: 0.44,
                 amplitude: 0.032,
                 wavelength: 0.62,
-                thickness: 0.16
+                thickness: 0.16,
+                motionEffect: currentMotionEffect
             )
             waveMaskNear.path = waveRibbonPath(
                 in: bounds,
@@ -67,13 +76,20 @@ final class LiveWallpaperRendererView: NSView {
                 baseline: 0.62,
                 amplitude: 0.048,
                 wavelength: 0.72,
-                thickness: 0.22
+                thickness: 0.22,
+                motionEffect: currentMotionEffect
             )
         }
     }
 
-    func render(image: CGImage, palette: GradientPalette, animateGradient: Bool) {
+    func render(
+        image: CGImage,
+        palette: GradientPalette,
+        animateGradient: Bool,
+        motionEffect: LiveGradientMotionEffect
+    ) {
         self.palette = palette
+        self.currentMotionEffect = motionEffect
 
         imageLayer.contents = image
         imageLayer.contentsGravity = .resizeAspect
@@ -141,12 +157,13 @@ final class LiveWallpaperRendererView: NSView {
             return
         }
 
-        installWaveAnimations()
+        let profile = motionProfile(for: currentMotionEffect)
+        installWaveAnimations(profile: profile)
 
         let axisStart = CABasicAnimation(keyPath: "startPoint")
         axisStart.fromValue = NSValue(point: CGPoint(x: 0.07, y: 0.16))
         axisStart.toValue = NSValue(point: CGPoint(x: 0.90, y: 0.84))
-        axisStart.duration = 18
+        axisStart.duration = profile.farDuration
         axisStart.autoreverses = true
         axisStart.repeatCount = .infinity
         axisStart.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -155,7 +172,7 @@ final class LiveWallpaperRendererView: NSView {
         let axisEnd = CABasicAnimation(keyPath: "endPoint")
         axisEnd.fromValue = NSValue(point: CGPoint(x: 0.93, y: 0.84))
         axisEnd.toValue = NSValue(point: CGPoint(x: 0.10, y: 0.16))
-        axisEnd.duration = 18
+        axisEnd.duration = profile.farDuration
         axisEnd.autoreverses = true
         axisEnd.repeatCount = .infinity
         axisEnd.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -170,7 +187,7 @@ final class LiveWallpaperRendererView: NSView {
         let colorsAnimation = CAKeyframeAnimation(keyPath: "colors")
         colorsAnimation.values = colorFrames
         colorsAnimation.keyTimes = phases.map { NSNumber(value: Double($0)) }
-        colorsAnimation.duration = 16
+        colorsAnimation.duration = max(12, profile.farDuration * 0.85)
         colorsAnimation.repeatCount = .infinity
         colorsAnimation.calculationMode = .linear
         colorsAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
@@ -179,7 +196,7 @@ final class LiveWallpaperRendererView: NSView {
         let glowStart = CABasicAnimation(keyPath: "startPoint")
         glowStart.fromValue = NSValue(point: CGPoint(x: 0.20, y: 0.24))
         glowStart.toValue = NSValue(point: CGPoint(x: 0.76, y: 0.72))
-        glowStart.duration = 14
+        glowStart.duration = max(10, profile.nearDuration * 0.95)
         glowStart.autoreverses = true
         glowStart.repeatCount = .infinity
         glowStart.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -188,14 +205,14 @@ final class LiveWallpaperRendererView: NSView {
         let glowEnd = CABasicAnimation(keyPath: "endPoint")
         glowEnd.fromValue = NSValue(point: CGPoint(x: 1.00, y: 1.00))
         glowEnd.toValue = NSValue(point: CGPoint(x: 0.58, y: 0.58))
-        glowEnd.duration = 14
+        glowEnd.duration = max(10, profile.nearDuration * 0.95)
         glowEnd.autoreverses = true
         glowEnd.repeatCount = .infinity
         glowEnd.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         glowLayer.add(glowEnd, forKey: "glowEndPoint")
     }
 
-    private func installWaveAnimations() {
+    private func installWaveAnimations(profile: MotionProfile) {
         guard !bounds.isEmpty else { return }
 
         waveLayerFar.opacity = 0.48
@@ -209,13 +226,14 @@ final class LiveWallpaperRendererView: NSView {
                 baseline: 0.44,
                 amplitude: 0.032,
                 wavelength: 0.62,
-                thickness: 0.16
+                thickness: 0.16,
+                motionEffect: currentMotionEffect
             )
         }
         let farAnimation = CAKeyframeAnimation(keyPath: "path")
         farAnimation.values = farPaths
         farAnimation.keyTimes = farPhases.map { NSNumber(value: Double($0)) }
-        farAnimation.duration = 20
+        farAnimation.duration = profile.farDuration
         farAnimation.repeatCount = .infinity
         farAnimation.calculationMode = .linear
         farAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
@@ -229,21 +247,22 @@ final class LiveWallpaperRendererView: NSView {
                 baseline: 0.62,
                 amplitude: 0.048,
                 wavelength: 0.72,
-                thickness: 0.22
+                thickness: 0.22,
+                motionEffect: currentMotionEffect
             )
         }
         let nearAnimation = CAKeyframeAnimation(keyPath: "path")
         nearAnimation.values = nearPaths
         nearAnimation.keyTimes = nearPhases.map { NSNumber(value: Double($0)) }
-        nearAnimation.duration = 13
+        nearAnimation.duration = profile.nearDuration
         nearAnimation.repeatCount = .infinity
         nearAnimation.calculationMode = .linear
         nearAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
         waveMaskNear.add(nearAnimation, forKey: "wavePath")
 
         let nearOpacity = CABasicAnimation(keyPath: "opacity")
-        nearOpacity.fromValue = 0.50
-        nearOpacity.toValue = 0.68
+        nearOpacity.fromValue = profile.nearOpacityRange.lowerBound
+        nearOpacity.toValue = profile.nearOpacityRange.upperBound
         nearOpacity.duration = 6
         nearOpacity.autoreverses = true
         nearOpacity.repeatCount = .infinity
@@ -251,8 +270,8 @@ final class LiveWallpaperRendererView: NSView {
         waveLayerNear.add(nearOpacity, forKey: "breath")
 
         let farOpacity = CABasicAnimation(keyPath: "opacity")
-        farOpacity.fromValue = 0.38
-        farOpacity.toValue = 0.52
+        farOpacity.fromValue = profile.farOpacityRange.lowerBound
+        farOpacity.toValue = profile.farOpacityRange.upperBound
         farOpacity.duration = 8
         farOpacity.autoreverses = true
         farOpacity.repeatCount = .infinity
@@ -383,7 +402,8 @@ final class LiveWallpaperRendererView: NSView {
         baseline: CGFloat,
         amplitude: CGFloat,
         wavelength: CGFloat,
-        thickness: CGFloat
+        thickness: CGFloat,
+        motionEffect: LiveGradientMotionEffect
     ) -> CGPath {
         let width = rect.width
         let height = rect.height
@@ -396,25 +416,102 @@ final class LiveWallpaperRendererView: NSView {
         let path = CGMutablePath()
         var x: CGFloat = 0
 
-        let startY = yBase + sin((phase * .pi * 2)) * amp
+        let startY = yBase + knotValue(
+            progress: 0,
+            phase: phase,
+            motionEffect: motionEffect
+        ) * amp
         path.move(to: CGPoint(x: 0, y: startY))
 
         while x <= width {
-            let progress = (x / waveLength) * .pi * 2 + (phase * .pi * 2)
-            let y = yBase + sin(progress) * amp
+            let progress = (x / waveLength) * .pi * 2
+            let y = yBase + knotValue(
+                progress: progress,
+                phase: phase,
+                motionEffect: motionEffect
+            ) * amp
             path.addLine(to: CGPoint(x: x, y: y))
             x += step
         }
-        path.addLine(to: CGPoint(x: width, y: yBase + sin((width / waveLength) * .pi * 2 + phase * .pi * 2) * amp + band))
+        let edgeProgress = (width / waveLength) * .pi * 2
+        let edgeWave = knotValue(
+            progress: edgeProgress,
+            phase: phase,
+            motionEffect: motionEffect
+        )
+        path.addLine(to: CGPoint(x: width, y: yBase + edgeWave * amp + band))
 
         var reverseX = width
         while reverseX >= 0 {
-            let progress = (reverseX / waveLength) * .pi * 2 + (phase * .pi * 2)
-            let y = yBase + sin(progress) * amp + band
+            let progress = (reverseX / waveLength) * .pi * 2
+            let y = yBase + knotValue(
+                progress: progress,
+                phase: phase,
+                motionEffect: motionEffect
+            ) * amp + band
             path.addLine(to: CGPoint(x: reverseX, y: y))
             reverseX -= step
         }
         path.closeSubpath()
         return path
+    }
+
+    private func motionProfile(for effect: LiveGradientMotionEffect) -> MotionProfile {
+        switch effect {
+        case .simpleEllipse:
+            MotionProfile(
+                farDuration: 26,
+                nearDuration: 18,
+                nearOpacityRange: 0.52...0.62,
+                farOpacityRange: 0.40...0.50
+            )
+        case .mediumLoops:
+            MotionProfile(
+                farDuration: 20,
+                nearDuration: 13,
+                nearOpacityRange: 0.50...0.68,
+                farOpacityRange: 0.38...0.52
+            )
+        case .denseKnots:
+            MotionProfile(
+                farDuration: 14,
+                nearDuration: 9,
+                nearOpacityRange: 0.46...0.74,
+                farOpacityRange: 0.34...0.56
+            )
+        case .gridLattice:
+            MotionProfile(
+                farDuration: 12,
+                nearDuration: 12,
+                nearOpacityRange: 0.44...0.66,
+                farOpacityRange: 0.36...0.54
+            )
+        }
+    }
+
+    private func knotValue(
+        progress: CGFloat,
+        phase: CGFloat,
+        motionEffect: LiveGradientMotionEffect
+    ) -> CGFloat {
+        let p = phase * .pi * 2
+
+        switch motionEffect {
+        case .simpleEllipse:
+            return sin(progress + p)
+        case .mediumLoops:
+            let a = sin(progress + p)
+            let b = sin((progress * 2) - (p * 0.7))
+            return (a * 0.72) + (b * 0.28)
+        case .denseKnots:
+            let a = sin((progress * 2) + (p * 1.4))
+            let b = sin((progress * 3) - (p * 1.1))
+            let c = cos((progress * 5) + (p * 0.6))
+            return (a * 0.50) + (b * 0.32) + (c * 0.18)
+        case .gridLattice:
+            let a = sin((progress * 3) + p)
+            let b = sin((progress * 4) - p)
+            return (a * 0.5) + (b * 0.5)
+        }
     }
 }
