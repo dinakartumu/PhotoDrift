@@ -307,14 +307,20 @@ final class ShuffleEngine {
     ) throws -> WallpaperService.Warning? {
         if scaling == .fitToScreen {
             if useLiveDesktopLayer {
+                let warning = try WallpaperService.setWallpaper(
+                    from: rawURL,
+                    scaling: scaling,
+                    applyToAllDesktops: applyToAllDesktops
+                )
+                lastAppliedWallpaperURL = rawURL
+                lastAppliedWallpaperScaling = scaling
+
                 try LiveDesktopLayerService.shared.present(
                     imageData: imageData,
                     animateGradient: true
                 )
                 isLiveDesktopLayerActive = true
-                lastAppliedWallpaperURL = nil
-                lastAppliedWallpaperScaling = .fitToScreen
-                return nil
+                return warning
             }
 
             if isLiveDesktopLayerActive {
