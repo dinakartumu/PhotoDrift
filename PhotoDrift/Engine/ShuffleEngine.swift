@@ -307,10 +307,10 @@ final class ShuffleEngine {
     ) throws -> WallpaperService.Warning? {
         if scaling == .fitToScreen {
             if useLiveDesktopLayer {
-                let warning = try WallpaperService.setWallpaper(
+                _ = try WallpaperService.setWallpaper(
                     from: rawURL,
                     scaling: scaling,
-                    applyToAllDesktops: applyToAllDesktops
+                    applyToAllDesktops: false
                 )
                 lastAppliedWallpaperURL = rawURL
                 lastAppliedWallpaperScaling = scaling
@@ -320,7 +320,7 @@ final class ShuffleEngine {
                     animateGradient: true
                 )
                 isLiveDesktopLayerActive = true
-                return warning
+                return applyToAllDesktops ? .liveLayerCurrentSpaceOnly : nil
             }
 
             if isLiveDesktopLayerActive {
@@ -441,6 +441,24 @@ final class ShuffleEngine {
 
     func handleActiveSpaceChanged() {
         if isLiveDesktopLayerActive {
+            guard Date().timeIntervalSince(lastSpaceReapplyDate) > 0.4 else {
+                LiveDesktopLayerService.shared.ensureVisible()
+                return
+            }
+            lastSpaceReapplyDate = Date()
+
+            if let url = lastAppliedWallpaperURL {
+                do {
+                    _ = try WallpaperService.setWallpaper(
+                        from: url,
+                        scaling: lastAppliedWallpaperScaling,
+                        applyToAllDesktops: false
+                    )
+                } catch {
+                    statusMessage = "Space change wallpaper apply failed: \(error.localizedDescription)"
+                    postStateChange()
+                }
+            }
             LiveDesktopLayerService.shared.ensureVisible()
             return
         }
