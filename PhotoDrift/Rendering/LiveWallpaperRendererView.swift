@@ -24,8 +24,18 @@ final class LiveWallpaperRendererView: NSView {
     private struct MotionProfile {
         let farDuration: CFTimeInterval
         let nearDuration: CFTimeInterval
+        let colorDuration: CFTimeInterval
+        let glowDuration: CFTimeInterval
         let nearOpacityRange: ClosedRange<Float>
         let farOpacityRange: ClosedRange<Float>
+    }
+
+    private struct WaveBandGeometry {
+        let baseline: CGFloat
+        let amplitude: CGFloat
+        let wavelength: CGFloat
+        let thickness: CGFloat
+        let phaseOffset: CGFloat
     }
 
     override init(frame frameRect: NSRect) {
@@ -86,22 +96,24 @@ final class LiveWallpaperRendererView: NSView {
 
     private func updateWaveMaskPaths() {
         guard !bounds.isEmpty else { return }
+        let farBand = waveBandGeometry(for: currentMotionEffect, isNearBand: false)
+        let nearBand = waveBandGeometry(for: currentMotionEffect, isNearBand: true)
         waveMaskFar.path = waveRibbonPath(
             in: bounds,
-            phase: 0,
-            baseline: 0.44,
-            amplitude: 0.032,
-            wavelength: 0.62,
-            thickness: 0.16,
+            phase: farBand.phaseOffset,
+            baseline: farBand.baseline,
+            amplitude: farBand.amplitude,
+            wavelength: farBand.wavelength,
+            thickness: farBand.thickness,
             motionEffect: currentMotionEffect
         )
         waveMaskNear.path = waveRibbonPath(
             in: bounds,
-            phase: 0.2,
-            baseline: 0.62,
-            amplitude: 0.048,
-            wavelength: 0.72,
-            thickness: 0.22,
+            phase: nearBand.phaseOffset,
+            baseline: nearBand.baseline,
+            amplitude: nearBand.amplitude,
+            wavelength: nearBand.wavelength,
+            thickness: nearBand.thickness,
             motionEffect: currentMotionEffect
         )
     }
@@ -195,7 +207,7 @@ final class LiveWallpaperRendererView: NSView {
         let colorsAnimation = CAKeyframeAnimation(keyPath: "colors")
         colorsAnimation.values = colorFrames
         colorsAnimation.keyTimes = phases.map { NSNumber(value: Double($0)) }
-        colorsAnimation.duration = max(12, profile.farDuration * 0.85)
+        colorsAnimation.duration = profile.colorDuration
         colorsAnimation.repeatCount = .infinity
         colorsAnimation.calculationMode = .linear
         colorsAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
@@ -204,7 +216,7 @@ final class LiveWallpaperRendererView: NSView {
         let glowStart = CABasicAnimation(keyPath: "startPoint")
         glowStart.fromValue = NSValue(point: CGPoint(x: 0.20, y: 0.24))
         glowStart.toValue = NSValue(point: CGPoint(x: 0.76, y: 0.72))
-        glowStart.duration = max(10, profile.nearDuration * 0.95)
+        glowStart.duration = profile.glowDuration
         glowStart.autoreverses = true
         glowStart.repeatCount = .infinity
         glowStart.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -213,7 +225,7 @@ final class LiveWallpaperRendererView: NSView {
         let glowEnd = CABasicAnimation(keyPath: "endPoint")
         glowEnd.fromValue = NSValue(point: CGPoint(x: 1.00, y: 1.00))
         glowEnd.toValue = NSValue(point: CGPoint(x: 0.58, y: 0.58))
-        glowEnd.duration = max(10, profile.nearDuration * 0.95)
+        glowEnd.duration = profile.glowDuration
         glowEnd.autoreverses = true
         glowEnd.repeatCount = .infinity
         glowEnd.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -226,15 +238,17 @@ final class LiveWallpaperRendererView: NSView {
         waveLayerFar.opacity = 0.48
         waveLayerNear.opacity = 0.62
 
-        let farPhases: [CGFloat] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        let farBand = waveBandGeometry(for: currentMotionEffect, isNearBand: false)
+        let nearBand = waveBandGeometry(for: currentMotionEffect, isNearBand: true)
+        let farPhases = phaseSamples(for: currentMotionEffect)
         let farPaths: [CGPath] = farPhases.map { phase in
             waveRibbonPath(
                 in: bounds,
-                phase: phase,
-                baseline: 0.44,
-                amplitude: 0.032,
-                wavelength: 0.62,
-                thickness: 0.16,
+                phase: phase + farBand.phaseOffset,
+                baseline: farBand.baseline,
+                amplitude: farBand.amplitude,
+                wavelength: farBand.wavelength,
+                thickness: farBand.thickness,
                 motionEffect: currentMotionEffect
             )
         }
@@ -247,15 +261,15 @@ final class LiveWallpaperRendererView: NSView {
         farAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
         waveMaskFar.add(farAnimation, forKey: "wavePath")
 
-        let nearPhases: [CGFloat] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        let nearPhases = phaseSamples(for: currentMotionEffect)
         let nearPaths: [CGPath] = nearPhases.map { phase in
             waveRibbonPath(
                 in: bounds,
-                phase: phase + 0.3,
-                baseline: 0.62,
-                amplitude: 0.048,
-                wavelength: 0.72,
-                thickness: 0.22,
+                phase: phase + nearBand.phaseOffset,
+                baseline: nearBand.baseline,
+                amplitude: nearBand.amplitude,
+                wavelength: nearBand.wavelength,
+                thickness: nearBand.thickness,
                 motionEffect: currentMotionEffect
             )
         }
@@ -419,7 +433,7 @@ final class LiveWallpaperRendererView: NSView {
         let amp = height * amplitude
         let band = height * thickness
         let waveLength = max(80, width * wavelength)
-        let step = max(6, width / 96)
+        let step = max(4, width / samplingDivisor(for: motionEffect))
 
         let path = CGMutablePath()
         var x: CGFloat = 0
@@ -468,32 +482,138 @@ final class LiveWallpaperRendererView: NSView {
         switch effect {
         case .simpleEllipse:
             MotionProfile(
-                farDuration: 26,
-                nearDuration: 18,
-                nearOpacityRange: 0.52...0.62,
-                farOpacityRange: 0.40...0.50
+                farDuration: 30,
+                nearDuration: 22,
+                colorDuration: 22,
+                glowDuration: 16,
+                nearOpacityRange: 0.50...0.60,
+                farOpacityRange: 0.38...0.46
             )
         case .mediumLoops:
             MotionProfile(
                 farDuration: 20,
-                nearDuration: 13,
+                nearDuration: 14,
+                colorDuration: 16,
+                glowDuration: 12,
                 nearOpacityRange: 0.50...0.68,
                 farOpacityRange: 0.38...0.52
             )
         case .denseKnots:
             MotionProfile(
-                farDuration: 14,
-                nearDuration: 9,
-                nearOpacityRange: 0.46...0.74,
-                farOpacityRange: 0.34...0.56
+                farDuration: 12,
+                nearDuration: 8,
+                colorDuration: 12,
+                glowDuration: 9,
+                nearOpacityRange: 0.46...0.76,
+                farOpacityRange: 0.34...0.58
             )
         case .gridLattice:
             MotionProfile(
-                farDuration: 12,
-                nearDuration: 12,
-                nearOpacityRange: 0.44...0.66,
-                farOpacityRange: 0.36...0.54
+                farDuration: 9,
+                nearDuration: 9,
+                colorDuration: 10,
+                glowDuration: 8,
+                nearOpacityRange: 0.42...0.70,
+                farOpacityRange: 0.34...0.56
             )
+        }
+    }
+
+    private func waveBandGeometry(
+        for effect: LiveGradientMotionEffect,
+        isNearBand: Bool
+    ) -> WaveBandGeometry {
+        switch (effect, isNearBand) {
+        case (.simpleEllipse, false):
+            return WaveBandGeometry(
+                baseline: 0.46,
+                amplitude: 0.017,
+                wavelength: 1.08,
+                thickness: 0.17,
+                phaseOffset: 0.00
+            )
+        case (.simpleEllipse, true):
+            return WaveBandGeometry(
+                baseline: 0.64,
+                amplitude: 0.024,
+                wavelength: 1.18,
+                thickness: 0.23,
+                phaseOffset: 0.17
+            )
+        case (.mediumLoops, false):
+            return WaveBandGeometry(
+                baseline: 0.44,
+                amplitude: 0.032,
+                wavelength: 0.74,
+                thickness: 0.16,
+                phaseOffset: 0.00
+            )
+        case (.mediumLoops, true):
+            return WaveBandGeometry(
+                baseline: 0.62,
+                amplitude: 0.048,
+                wavelength: 0.82,
+                thickness: 0.22,
+                phaseOffset: 0.28
+            )
+        case (.denseKnots, false):
+            return WaveBandGeometry(
+                baseline: 0.42,
+                amplitude: 0.052,
+                wavelength: 0.50,
+                thickness: 0.18,
+                phaseOffset: 0.00
+            )
+        case (.denseKnots, true):
+            return WaveBandGeometry(
+                baseline: 0.60,
+                amplitude: 0.074,
+                wavelength: 0.56,
+                thickness: 0.24,
+                phaseOffset: 0.35
+            )
+        case (.gridLattice, false):
+            return WaveBandGeometry(
+                baseline: 0.45,
+                amplitude: 0.028,
+                wavelength: 0.40,
+                thickness: 0.15,
+                phaseOffset: 0.00
+            )
+        case (.gridLattice, true):
+            return WaveBandGeometry(
+                baseline: 0.62,
+                amplitude: 0.036,
+                wavelength: 0.36,
+                thickness: 0.19,
+                phaseOffset: 0.24
+            )
+        }
+    }
+
+    private func phaseSamples(for effect: LiveGradientMotionEffect) -> [CGFloat] {
+        switch effect {
+        case .simpleEllipse:
+            return [0.00, 0.16, 0.32, 0.48, 0.64, 0.80, 1.00]
+        case .mediumLoops:
+            return [0.00, 0.14, 0.28, 0.42, 0.56, 0.70, 0.84, 1.00]
+        case .denseKnots:
+            return [0.00, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00]
+        case .gridLattice:
+            return [0.00, 0.125, 0.25, 0.375, 0.50, 0.625, 0.75, 0.875, 1.00]
+        }
+    }
+
+    private func samplingDivisor(for effect: LiveGradientMotionEffect) -> CGFloat {
+        switch effect {
+        case .simpleEllipse:
+            return 100
+        case .mediumLoops:
+            return 116
+        case .denseKnots:
+            return 140
+        case .gridLattice:
+            return 160
         }
     }
 
@@ -506,20 +626,20 @@ final class LiveWallpaperRendererView: NSView {
 
         switch motionEffect {
         case .simpleEllipse:
-            return sin(progress + p)
+            return sin(progress + (p * 0.75))
         case .mediumLoops:
             let a = sin(progress + p)
-            let b = sin((progress * 2) - (p * 0.7))
-            return (a * 0.72) + (b * 0.28)
+            let b = cos((progress * 0.52) - (p * 0.65))
+            return (a * b) * 1.06
         case .denseKnots:
-            let a = sin((progress * 2) + (p * 1.4))
-            let b = sin((progress * 3) - (p * 1.1))
-            let c = cos((progress * 5) + (p * 0.6))
-            return (a * 0.50) + (b * 0.32) + (c * 0.18)
+            let a = sin((progress * 2.3) + (p * 1.6))
+            let b = sin((progress * 4.9) - (p * 1.2))
+            let c = cos((progress * 7.4) + (p * 0.55))
+            return (a * 0.42) + (b * 0.33) + (c * 0.25)
         case .gridLattice:
-            let a = sin((progress * 3) + p)
-            let b = sin((progress * 4) - p)
-            return (a * 0.5) + (b * 0.5)
+            let lattice = sin((progress * 3.6) + p) * sin((progress * 5.2) - (p * 1.4))
+            let shimmer = sin((progress * 9.0) + (p * 0.5))
+            return (lattice * 0.68) + (shimmer * 0.32)
         }
     }
 }
