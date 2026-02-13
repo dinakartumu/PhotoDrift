@@ -20,7 +20,7 @@ final class LiveDesktopLayerService {
         let image: CGImage
         let palette: GradientPalette
         let animateGradient: Bool
-        let motionEffect: LiveGradientMotionEffect
+        var motionEffect: LiveGradientMotionEffect
     }
 
     private var windowsByDisplayID: [CGDirectDisplayID: NSWindow] = [:]
@@ -76,6 +76,13 @@ final class LiveDesktopLayerService {
         syncWindowsToCurrentScreens()
         applyCurrentState()
         orderWindowsVisible()
+    }
+
+    func updateMotionEffect(_ motionEffect: LiveGradientMotionEffect) {
+        guard var contentState else { return }
+        contentState.motionEffect = motionEffect
+        self.contentState = contentState
+        applyCurrentState()
     }
 
     private func ensureScreenObserver() {

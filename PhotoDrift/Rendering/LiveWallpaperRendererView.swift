@@ -60,26 +60,7 @@ final class LiveWallpaperRendererView: NSView {
 
         waveMaskFar.frame = bounds
         waveMaskNear.frame = bounds
-        if !bounds.isEmpty {
-            waveMaskFar.path = waveRibbonPath(
-                in: bounds,
-                phase: 0,
-                baseline: 0.44,
-                amplitude: 0.032,
-                wavelength: 0.62,
-                thickness: 0.16,
-                motionEffect: currentMotionEffect
-            )
-            waveMaskNear.path = waveRibbonPath(
-                in: bounds,
-                phase: 0.2,
-                baseline: 0.62,
-                amplitude: 0.048,
-                wavelength: 0.72,
-                thickness: 0.22,
-                motionEffect: currentMotionEffect
-            )
-        }
+        updateWaveMaskPaths()
     }
 
     func render(
@@ -88,14 +69,41 @@ final class LiveWallpaperRendererView: NSView {
         animateGradient: Bool,
         motionEffect: LiveGradientMotionEffect
     ) {
+        let motionEffectChanged = motionEffect != currentMotionEffect
         self.palette = palette
         self.currentMotionEffect = motionEffect
 
         imageLayer.contents = image
         imageLayer.contentsGravity = .resizeAspect
 
+        updateWaveMaskPaths()
         applyStops(phase: 0)
+        if motionEffectChanged, animateGradient, isAnimating {
+            updateAnimation(enabled: false, refreshTimeline: true)
+        }
         updateAnimation(enabled: animateGradient, refreshTimeline: true)
+    }
+
+    private func updateWaveMaskPaths() {
+        guard !bounds.isEmpty else { return }
+        waveMaskFar.path = waveRibbonPath(
+            in: bounds,
+            phase: 0,
+            baseline: 0.44,
+            amplitude: 0.032,
+            wavelength: 0.62,
+            thickness: 0.16,
+            motionEffect: currentMotionEffect
+        )
+        waveMaskNear.path = waveRibbonPath(
+            in: bounds,
+            phase: 0.2,
+            baseline: 0.62,
+            amplitude: 0.048,
+            wavelength: 0.72,
+            thickness: 0.22,
+            motionEffect: currentMotionEffect
+        )
     }
 
     private func setupLayers() {
