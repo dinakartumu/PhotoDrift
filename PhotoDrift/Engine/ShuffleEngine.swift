@@ -305,32 +305,40 @@ final class ShuffleEngine {
         useLiveDesktopLayer: Bool,
         applyToAllDesktops: Bool
     ) throws -> WallpaperService.Warning? {
-        if scaling == .fitToScreen {
+        if let applied = try setStaticGradientWallpaper(
+            imageData: imageData,
+            assetID: assetID,
+            scaling: scaling,
+            applyToAllDesktops: applyToAllDesktops
+        ) {
             if useLiveDesktopLayer {
-                _ = try WallpaperService.setWallpaper(
-                    from: rawURL,
-                    scaling: scaling,
-                    applyToAllDesktops: false
-                )
-                lastAppliedWallpaperURL = rawURL
-                lastAppliedWallpaperScaling = scaling
-
                 try LiveDesktopLayerService.shared.present(
                     imageData: imageData,
                     animateGradient: true
                 )
                 isLiveDesktopLayerActive = true
-                return applyToAllDesktops ? .liveLayerCurrentSpaceOnly : nil
-            }
-
-            if isLiveDesktopLayerActive {
+            } else if isLiveDesktopLayerActive {
                 LiveDesktopLayerService.shared.hide()
                 isLiveDesktopLayerActive = false
             }
+            return applied.warning
+        }
 
-            if let warning = try setStaticGradientWallpaper(imageData: imageData, assetID: assetID, applyToAllDesktops: applyToAllDesktops) {
-                return warning
-            }
+        // Fallback if gradient compositing fails.
+        if useLiveDesktopLayer {
+            _ = try WallpaperService.setWallpaper(
+                from: rawURL,
+                scaling: scaling,
+                applyToAllDesktops: false
+            )
+            lastAppliedWallpaperURL = rawURL
+            lastAppliedWallpaperScaling = scaling
+            try LiveDesktopLayerService.shared.present(
+                imageData: imageData,
+                animateGradient: true
+            )
+            isLiveDesktopLayerActive = true
+            return applyToAllDesktops ? .liveLayerCurrentSpaceOnly : nil
         }
 
         if isLiveDesktopLayerActive {
@@ -350,15 +358,20 @@ final class ShuffleEngine {
     private func setStaticGradientWallpaper(
         imageData: Data,
         assetID: String,
+        scaling: WallpaperScaling,
         applyToAllDesktops: Bool
-    ) throws -> WallpaperService.Warning? {
+    ) throws -> (warning: WallpaperService.Warning?, url: URL)? {
         let screenSize = ScreenUtility.targetSize
-        guard let composited = GradientRenderer.composite(imageData: imageData, screenSize: screenSize) else {
+        guard let composited = GradientRenderer.composite(
+            imageData: imageData,
+            screenSize: screenSize,
+            scaling: scaling
+        ) else {
             return nil
         }
         try ensureGradientDirectoryExists()
         let key = ImageCacheManager.cacheKey(for: assetID)
-        let name = "gradient_\(key).png"
+        let name = "gradient_\(key)_\(scaling.rawValue).png"
         let url = Self.gradientDirectory.appendingPathComponent(name)
         try composited.write(to: url, options: .atomic)
         _ = try WallpaperService.setWallpaper(
@@ -368,7 +381,7 @@ final class ShuffleEngine {
         )
         lastAppliedWallpaperURL = url
         lastAppliedWallpaperScaling = .fillScreen
-        return applyToAllDesktops ? .gradientMatteCurrentSpaceOnly : nil
+        return (applyToAllDesktops ? .gradientMatteCurrentSpaceOnly : nil, url)
     }
 
     private func ensureGradientDirectoryExists() throws {

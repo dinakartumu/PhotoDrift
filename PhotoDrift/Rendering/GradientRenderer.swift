@@ -6,7 +6,12 @@ enum GradientRenderer {
 
     /// Composites a gradient background with the photo drawn aspect-fit on top.
     /// Returns PNG data sized to `screenSize` (in pixels).
-    static func composite(imageData: Data, screenSize: CGSize, phase: CGFloat = 0) -> Data? {
+    static func composite(
+        imageData: Data,
+        screenSize: CGSize,
+        scaling: WallpaperScaling = .fitToScreen,
+        phase: CGFloat = 0
+    ) -> Data? {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
 
@@ -34,11 +39,14 @@ enum GradientRenderer {
         // 1. Draw gradient background
         drawGradient(in: ctx, size: screenSize, palette: palette, phase: phase)
 
-        // 2. Draw aspect-fit image
-        let imageSize = CGSize(width: image.width, height: image.height)
-        let fitRect = aspectFitRect(imageSize: imageSize, bounds: CGSize(width: width, height: height))
+        // 2. Draw image using selected wallpaper scaling semantics.
         ctx.interpolationQuality = .high
-        ctx.draw(image, in: fitRect)
+        drawForegroundImage(
+            image,
+            in: ctx,
+            bounds: CGSize(width: width, height: height),
+            scaling: scaling
+        )
 
         // 3. Export as PNG
         guard let composited = ctx.makeImage() else { return nil }
@@ -205,6 +213,56 @@ enum GradientRenderer {
         let y = (bounds.height - fitHeight) / 2
 
         return CGRect(x: x, y: y, width: fitWidth, height: fitHeight)
+    }
+
+    private static func aspectFillRect(imageSize: CGSize, bounds: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: bounds)
+        }
+
+        let scale = max(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let fillWidth = imageSize.width * scale
+        let fillHeight = imageSize.height * scale
+        let x = (bounds.width - fillWidth) / 2
+        let y = (bounds.height - fillHeight) / 2
+        return CGRect(x: x, y: y, width: fillWidth, height: fillHeight)
+    }
+
+    private static func drawForegroundImage(
+        _ image: CGImage,
+        in ctx: CGContext,
+        bounds: CGSize,
+        scaling: WallpaperScaling
+    ) {
+        let imageSize = CGSize(width: image.width, height: image.height)
+        let boundsRect = CGRect(origin: .zero, size: bounds)
+
+        switch scaling {
+        case .fitToScreen:
+            let fitRect = aspectFitRect(imageSize: imageSize, bounds: bounds)
+            ctx.draw(image, in: fitRect)
+        case .fillScreen:
+            let fillRect = aspectFillRect(imageSize: imageSize, bounds: bounds)
+            ctx.draw(image, in: fillRect)
+        case .stretchToFill:
+            ctx.draw(image, in: boundsRect)
+        case .center:
+            let x = (bounds.width - imageSize.width) / 2
+            let y = (bounds.height - imageSize.height) / 2
+            ctx.draw(image, in: CGRect(x: x, y: y, width: imageSize.width, height: imageSize.height))
+        case .tile:
+            let tileWidth = max(1, imageSize.width)
+            let tileHeight = max(1, imageSize.height)
+            var y: CGFloat = 0
+            while y < bounds.height {
+                var x: CGFloat = 0
+                while x < bounds.width {
+                    ctx.draw(image, in: CGRect(x: x, y: y, width: tileWidth, height: tileHeight))
+                    x += tileWidth
+                }
+                y += tileHeight
+            }
+        }
     }
 
     /// Returns true when the image would leave visible letterbox/pillarbox bars.
