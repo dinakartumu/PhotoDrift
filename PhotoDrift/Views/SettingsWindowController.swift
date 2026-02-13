@@ -341,6 +341,9 @@ final class GeneralSettingsViewController: NSViewController {
         guard let rawValue = sender.selectedItem?.representedObject as? String,
               let effect = LiveGradientMotionEffect(rawValue: rawValue) else { return }
         settings.liveGradientMotionEffect = effect
+        if settings.useLiveDesktopLayer {
+            LiveDesktopLayerService.shared.updateMotionEffect(effect)
+        }
         save()
     }
 
