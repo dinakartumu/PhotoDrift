@@ -4,6 +4,8 @@ enum WallpaperService {
     enum Warning: LocalizedError, Equatable {
         case allDesktopsPermissionDenied
         case allDesktopsAutomationFailed(message: String)
+        case gradientMatteCurrentSpaceOnly
+        case liveLayerCurrentSpaceOnly
 
         var errorDescription: String? {
             switch self {
@@ -11,6 +13,10 @@ enum WallpaperService {
                 return "Wallpaper updated for current desktop only. Allow PhotoDrift to control System Events in Privacy & Security > Automation."
             case .allDesktopsAutomationFailed(let message):
                 return "Wallpaper updated for current desktop only. \(message)"
+            case .gradientMatteCurrentSpaceOnly:
+                return "Gradient matte was applied to the current Space only to preserve gradient scaling and avoid black bars."
+            case .liveLayerCurrentSpaceOnly:
+                return "Live layer fallback wallpaper is applied per Space to preserve the selected scaling."
             }
         }
 
@@ -19,6 +25,10 @@ enum WallpaperService {
             case .allDesktopsPermissionDenied:
                 return "Allow PhotoDrift to control System Events in System Settings > Privacy & Security > Automation to update all desktops."
             case .allDesktopsAutomationFailed:
+                return nil
+            case .gradientMatteCurrentSpaceOnly:
+                return nil
+            case .liveLayerCurrentSpaceOnly:
                 return nil
             }
         }

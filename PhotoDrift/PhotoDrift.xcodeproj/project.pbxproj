@@ -24,23 +24,24 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		8F28F5322F3E5A7F00C2810D /* PhotoDrift.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = PhotoDrift.xcodeproj; sourceTree = "<group>"; };
 		8F7E34FE2F2CDADE00EAEB39 /* PhotoDrift.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoDrift.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F7E350D2F2CDAE000EAEB39 /* PhotoDriftTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PhotoDriftTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F7E35172F2CDAE000EAEB39 /* PhotoDriftUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PhotoDriftUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		8F7E35002F2CDADE00EAEB39 /* PhotoDrift */ = {
+		8F7E35002F2CDADE00EAEB39 /* . */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = .;
 			sourceTree = "<group>";
 		};
-		8F7E35102F2CDAE000EAEB39 /* PhotoDriftTests */ = {
+		8F7E35102F2CDAE000EAEB39 /* ../PhotoDriftTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ../PhotoDriftTests;
 			sourceTree = "<group>";
 		};
-		8F7E351A2F2CDAE000EAEB39 /* PhotoDriftUITests */ = {
+		8F7E351A2F2CDAE000EAEB39 /* ../PhotoDriftUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ../PhotoDriftUITests;
 			sourceTree = "<group>";
@@ -72,12 +73,17 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		8F28F5332F3E5A7F00C2810D /* Products */ = {
+			isa = PBXGroup;
+			name = Products;
+			sourceTree = "<group>";
+		};
 		8F7E34F52F2CDADE00EAEB39 = {
 			isa = PBXGroup;
 			children = (
-				8F7E35002F2CDADE00EAEB39 /* PhotoDrift */,
-				8F7E35102F2CDAE000EAEB39 /* PhotoDriftTests */,
-				8F7E351A2F2CDAE000EAEB39 /* PhotoDriftUITests */,
+				8F7E35002F2CDADE00EAEB39 /* . */,
+				8F7E35102F2CDAE000EAEB39 /* ../PhotoDriftTests */,
+				8F7E351A2F2CDAE000EAEB39 /* ../PhotoDriftUITests */,
 				8F7E34FF2F2CDADE00EAEB39 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -108,7 +114,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				8F7E35002F2CDADE00EAEB39 /* PhotoDrift */,
+				8F7E35002F2CDADE00EAEB39 /* . */,
 			);
 			name = PhotoDrift;
 			packageProductDependencies = (
@@ -131,7 +137,7 @@
 				8F7E350F2F2CDAE000EAEB39 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				8F7E35102F2CDAE000EAEB39 /* PhotoDriftTests */,
+				8F7E35102F2CDAE000EAEB39 /* ../PhotoDriftTests */,
 			);
 			name = PhotoDriftTests;
 			packageProductDependencies = (
@@ -154,7 +160,7 @@
 				8F7E35192F2CDAE000EAEB39 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				8F7E351A2F2CDAE000EAEB39 /* PhotoDriftUITests */,
+				8F7E351A2F2CDAE000EAEB39 /* ../PhotoDriftUITests */,
 			);
 			name = PhotoDriftUITests;
 			packageProductDependencies = (
@@ -198,6 +204,12 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8F7E34FF2F2CDADE00EAEB39 /* Products */;
 			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = 8F28F5332F3E5A7F00C2810D /* Products */;
+					ProjectRef = 8F28F5322F3E5A7F00C2810D /* PhotoDrift.xcodeproj */;
+				},
+			);
 			projectRoot = "";
 			targets = (
 				8F7E34FD2F2CDADE00EAEB39 /* PhotoDrift */,

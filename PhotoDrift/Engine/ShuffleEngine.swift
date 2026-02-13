@@ -26,6 +26,7 @@ final class ShuffleEngine {
     private var lastAppliedWallpaperURL: URL?
     private var lastAppliedWallpaperScaling: WallpaperScaling = .fitToScreen
     private var lastSpaceReapplyDate: Date = .distantPast
+    private var isLiveDesktopLayerActive = false
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -149,6 +150,8 @@ final class ShuffleEngine {
         let settings = AppSettings.current(in: context)
         let scaling = settings.wallpaperScaling
         let applyToAllDesktops = settings.applyToAllDesktops
+        let useLiveDesktopLayer = settings.useLiveDesktopLayer
+        let liveGradientMotionEffect = settings.liveGradientMotionEffect
 
         var pool: [UnifiedPool.PoolEntry]
         do {
@@ -215,6 +218,8 @@ final class ShuffleEngine {
                     rawURL: cached,
                     assetID: pick.id,
                     scaling: scaling,
+                    useLiveDesktopLayer: useLiveDesktopLayer,
+                    liveGradientMotionEffect: liveGradientMotionEffect,
                     applyToAllDesktops: applyToAllDesktops
                 )
                 addToHistory(pick.id)
@@ -242,6 +247,8 @@ final class ShuffleEngine {
                 rawURL: url,
                 assetID: pick.id,
                 scaling: scaling,
+                useLiveDesktopLayer: useLiveDesktopLayer,
+                liveGradientMotionEffect: liveGradientMotionEffect,
                 applyToAllDesktops: applyToAllDesktops
             )
 
@@ -268,6 +275,8 @@ final class ShuffleEngine {
                         rawURL: url,
                         assetID: fallback.id,
                         scaling: scaling,
+                        useLiveDesktopLayer: useLiveDesktopLayer,
+                        liveGradientMotionEffect: liveGradientMotionEffect,
                         applyToAllDesktops: applyToAllDesktops
                     )
                     addToHistory(fallback.id)
@@ -297,24 +306,51 @@ final class ShuffleEngine {
         rawURL: URL,
         assetID: String,
         scaling: WallpaperScaling,
+        useLiveDesktopLayer: Bool,
+        liveGradientMotionEffect: LiveGradientMotionEffect,
         applyToAllDesktops: Bool
     ) throws -> WallpaperService.Warning? {
-        if scaling == .fitToScreen {
-            let screenSize = ScreenUtility.targetSize
-            if let composited = GradientRenderer.composite(imageData: imageData, screenSize: screenSize) {
-                let key = ImageCacheManager.cacheKey(for: assetID)
-                let name = "gradient_\(key).png"
-                let url = Self.gradientDirectory.appendingPathComponent(name)
-                try composited.write(to: url)
-                let warning = try WallpaperService.setWallpaper(
-                    from: url,
-                    scaling: .fillScreen,
-                    applyToAllDesktops: applyToAllDesktops
+        if let applied = try setStaticGradientWallpaper(
+            imageData: imageData,
+            assetID: assetID,
+            scaling: scaling,
+            applyToAllDesktops: applyToAllDesktops
+        ) {
+            if useLiveDesktopLayer {
+                try LiveDesktopLayerService.shared.present(
+                    imageData: imageData,
+                    animateGradient: true,
+                    motionEffect: liveGradientMotionEffect
                 )
-                lastAppliedWallpaperURL = url
-                lastAppliedWallpaperScaling = .fillScreen
-                return warning
+                isLiveDesktopLayerActive = true
+            } else if isLiveDesktopLayerActive {
+                LiveDesktopLayerService.shared.hide()
+                isLiveDesktopLayerActive = false
             }
+            return applied.warning
+        }
+
+        // Fallback if gradient compositing fails.
+        if useLiveDesktopLayer {
+            _ = try WallpaperService.setWallpaper(
+                from: rawURL,
+                scaling: scaling,
+                applyToAllDesktops: false
+            )
+            lastAppliedWallpaperURL = rawURL
+            lastAppliedWallpaperScaling = scaling
+            try LiveDesktopLayerService.shared.present(
+                imageData: imageData,
+                animateGradient: true,
+                motionEffect: liveGradientMotionEffect
+            )
+            isLiveDesktopLayerActive = true
+            return applyToAllDesktops ? .liveLayerCurrentSpaceOnly : nil
+        }
+
+        if isLiveDesktopLayerActive {
+            LiveDesktopLayerService.shared.hide()
+            isLiveDesktopLayerActive = false
         }
         let warning = try WallpaperService.setWallpaper(
             from: rawURL,
@@ -324,6 +360,42 @@ final class ShuffleEngine {
         lastAppliedWallpaperURL = rawURL
         lastAppliedWallpaperScaling = scaling
         return warning
+    }
+
+    private func setStaticGradientWallpaper(
+        imageData: Data,
+        assetID: String,
+        scaling: WallpaperScaling,
+        applyToAllDesktops: Bool
+    ) throws -> (warning: WallpaperService.Warning?, url: URL)? {
+        let screenSize = ScreenUtility.targetSize
+        guard let composited = GradientRenderer.composite(
+            imageData: imageData,
+            screenSize: screenSize,
+            scaling: scaling
+        ) else {
+            return nil
+        }
+        try ensureGradientDirectoryExists()
+        let key = ImageCacheManager.cacheKey(for: assetID)
+        let name = "gradient_\(key)_\(scaling.rawValue).png"
+        let url = Self.gradientDirectory.appendingPathComponent(name)
+        try composited.write(to: url, options: .atomic)
+        _ = try WallpaperService.setWallpaper(
+            from: url,
+            scaling: .fillScreen,
+            applyToAllDesktops: false
+        )
+        lastAppliedWallpaperURL = url
+        lastAppliedWallpaperScaling = .fillScreen
+        return (applyToAllDesktops ? .gradientMatteCurrentSpaceOnly : nil, url)
+    }
+
+    private func ensureGradientDirectoryExists() throws {
+        try FileManager.default.createDirectory(
+            at: Self.gradientDirectory,
+            withIntermediateDirectories: true
+        )
     }
 
     private func wallpaperWarningMessage(from warning: WallpaperService.Warning?) -> String? {
@@ -388,6 +460,29 @@ final class ShuffleEngine {
     }
 
     func handleActiveSpaceChanged() {
+        if isLiveDesktopLayerActive {
+            guard Date().timeIntervalSince(lastSpaceReapplyDate) > 0.4 else {
+                LiveDesktopLayerService.shared.ensureVisible()
+                return
+            }
+            lastSpaceReapplyDate = Date()
+
+            if let url = lastAppliedWallpaperURL {
+                do {
+                    _ = try WallpaperService.setWallpaper(
+                        from: url,
+                        scaling: lastAppliedWallpaperScaling,
+                        applyToAllDesktops: false
+                    )
+                } catch {
+                    statusMessage = "Space change wallpaper apply failed: \(error.localizedDescription)"
+                    postStateChange()
+                }
+            }
+            LiveDesktopLayerService.shared.ensureVisible()
+            return
+        }
+
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
         guard settings.applyToAllDesktops else { return }

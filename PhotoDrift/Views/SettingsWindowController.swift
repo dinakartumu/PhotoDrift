@@ -152,7 +152,7 @@ final class SettingsTabViewController: NSTabViewController {
 }
 
 final class GeneralSettingsViewController: NSViewController {
-    static let preferredContentSize = NSSize(width: 500, height: 320)
+    static let preferredContentSize = NSSize(width: 500, height: 370)
     private let context: ModelContext
     private var settings: AppSettings!
 
@@ -168,6 +168,8 @@ final class GeneralSettingsViewController: NSViewController {
     private var launchAtLoginCheckbox: NSButton!
     private var scalingPopup: NSPopUpButton!
     private var applyAllDesktopsCheckbox: NSButton!
+    private var liveDesktopLayerCheckbox: NSButton!
+    private var motionEffectPopup: NSPopUpButton!
 
     init(modelContainer: ModelContainer) {
         self.context = ModelContext(modelContainer)
@@ -223,12 +225,30 @@ final class GeneralSettingsViewController: NSViewController {
             target: self,
             action: #selector(applyAllDesktopsToggled(_:))
         )
+        liveDesktopLayerCheckbox = NSButton(
+            checkboxWithTitle: "Use live desktop layer (experimental)",
+            target: self,
+            action: #selector(liveDesktopLayerToggled(_:))
+        )
+        motionEffectPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        motionEffectPopup.target = self
+        motionEffectPopup.action = #selector(motionEffectChanged(_:))
+        motionEffectPopup.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        motionEffectPopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        motionEffectPopup.translatesAutoresizingMaskIntoConstraints = false
+        motionEffectPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
+        for effect in LiveGradientMotionEffect.allCases {
+            motionEffectPopup.addItem(withTitle: effect.displayName)
+            motionEffectPopup.lastItem?.representedObject = effect.rawValue
+        }
         let startupGrid = makeFormGrid(rows: [("Startup:", launchAtLoginCheckbox)])
         let shuffleGrid = makeFormGrid(rows: [("Shuffle Interval:", radioStack)])
         let wallpaperGrid = makeFormGrid(
             rows: [
                 ("Scaling:", scalingPopup),
                 ("Target:", applyAllDesktopsCheckbox),
+                ("Rendering:", liveDesktopLayerCheckbox),
+                ("Animation effect:", motionEffectPopup),
             ],
             fillControlColumn: true
         )
@@ -269,6 +289,13 @@ final class GeneralSettingsViewController: NSViewController {
         }
 
         applyAllDesktopsCheckbox.state = settings.applyToAllDesktops ? .on : .off
+        liveDesktopLayerCheckbox.state = settings.useLiveDesktopLayer ? .on : .off
+        motionEffectPopup.isEnabled = settings.useLiveDesktopLayer
+        if let item = motionEffectPopup.itemArray.first(where: {
+            ($0.representedObject as? String) == settings.liveGradientMotionEffect.rawValue
+        }) {
+            motionEffectPopup.select(item)
+        }
     }
 
     @objc private func intervalChanged(_ sender: NSButton) {
@@ -301,6 +328,22 @@ final class GeneralSettingsViewController: NSViewController {
 
     @objc private func applyAllDesktopsToggled(_ sender: NSButton) {
         settings.applyToAllDesktops = sender.state == .on
+        save()
+    }
+
+    @objc private func liveDesktopLayerToggled(_ sender: NSButton) {
+        settings.useLiveDesktopLayer = sender.state == .on
+        motionEffectPopup.isEnabled = settings.useLiveDesktopLayer
+        save()
+    }
+
+    @objc private func motionEffectChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+              let effect = LiveGradientMotionEffect(rawValue: rawValue) else { return }
+        settings.liveGradientMotionEffect = effect
+        if settings.useLiveDesktopLayer {
+            LiveDesktopLayerService.shared.updateMotionEffect(effect)
+        }
         save()
     }
 
