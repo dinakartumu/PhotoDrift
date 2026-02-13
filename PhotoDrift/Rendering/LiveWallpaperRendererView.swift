@@ -70,7 +70,6 @@ final class LiveWallpaperRendererView: NSView {
 
         waveMaskFar.frame = bounds
         waveMaskNear.frame = bounds
-        updateWaveMaskPaths()
     }
 
     func render(
@@ -86,7 +85,6 @@ final class LiveWallpaperRendererView: NSView {
         imageLayer.contents = image
         imageLayer.contentsGravity = .resizeAspect
 
-        updateWaveMaskPaths()
         applyStops(phase: 0)
         if motionEffectChanged, animateGradient, isAnimating {
             updateAnimation(enabled: false, refreshTimeline: true)
@@ -178,25 +176,10 @@ final class LiveWallpaperRendererView: NSView {
         }
 
         let profile = motionProfile(for: currentMotionEffect)
-        installWaveAnimations(profile: profile)
-
-        let axisStart = CABasicAnimation(keyPath: "startPoint")
-        axisStart.fromValue = NSValue(point: CGPoint(x: 0.07, y: 0.16))
-        axisStart.toValue = NSValue(point: CGPoint(x: 0.90, y: 0.84))
-        axisStart.duration = profile.farDuration
-        axisStart.autoreverses = true
-        axisStart.repeatCount = .infinity
-        axisStart.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        gradientLayer.add(axisStart, forKey: "axisStart")
-
-        let axisEnd = CABasicAnimation(keyPath: "endPoint")
-        axisEnd.fromValue = NSValue(point: CGPoint(x: 0.93, y: 0.84))
-        axisEnd.toValue = NSValue(point: CGPoint(x: 0.10, y: 0.16))
-        axisEnd.duration = profile.farDuration
-        axisEnd.autoreverses = true
-        axisEnd.repeatCount = .infinity
-        axisEnd.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        gradientLayer.add(axisEnd, forKey: "axisEnd")
+        gradientLayer.startPoint = CGPoint(x: 0.08, y: 0.18)
+        gradientLayer.endPoint = CGPoint(x: 0.92, y: 0.82)
+        waveLayerFar.opacity = 0
+        waveLayerNear.opacity = 0
 
         let phases: [CGFloat] = [0, 0.25, 0.5, 0.75, 1.0]
         let colorFrames: [[CGColor]] = phases.map { phase in
