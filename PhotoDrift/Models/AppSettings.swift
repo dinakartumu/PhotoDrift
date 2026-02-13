@@ -19,6 +19,22 @@ enum WallpaperScaling: String, CaseIterable {
     }
 }
 
+enum LiveGradientMotionEffect: String, CaseIterable {
+    case simpleEllipse
+    case mediumLoops
+    case denseKnots
+    case gridLattice
+
+    var displayName: String {
+        switch self {
+        case .simpleEllipse: "Simple shape (ellipse): smooth, calm drift"
+        case .mediumLoops: "Medium loops: figure-8 / flowing crossover motion"
+        case .denseKnots: "Dense knots: more turbulent, complex color weaving"
+        case .gridLattice: "Grid-like knot: repetitive lattice-like shimmer"
+        }
+    }
+}
+
 @Model
 final class AppSettings {
     var shuffleIntervalMinutes: Int
@@ -45,6 +61,12 @@ final class AppSettings {
     var useLiveDesktopLayer: Bool {
         get { WallpaperLiveLayerPreferences.isEnabled }
         set { WallpaperLiveLayerPreferences.isEnabled = newValue }
+    }
+
+    @Transient
+    var liveGradientMotionEffect: LiveGradientMotionEffect {
+        get { WallpaperLiveGradientMotionPreferences.effect }
+        set { WallpaperLiveGradientMotionPreferences.effect = newValue }
     }
 
     init(
@@ -100,6 +122,24 @@ enum WallpaperLiveLayerPreferences {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKey)
+        }
+    }
+}
+
+enum WallpaperLiveGradientMotionPreferences {
+    static let defaultsKey = "PhotoDrift.liveGradientMotionEffect"
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [defaultsKey: LiveGradientMotionEffect.mediumLoops.rawValue])
+    }
+
+    static var effect: LiveGradientMotionEffect {
+        get {
+            let raw = UserDefaults.standard.string(forKey: defaultsKey)
+            return LiveGradientMotionEffect(rawValue: raw ?? "") ?? .mediumLoops
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
         }
     }
 }
