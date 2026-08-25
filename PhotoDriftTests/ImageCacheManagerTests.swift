@@ -134,6 +134,147 @@ struct ImageCacheManagerTests {
         #expect(after == nil)
     }
 
+    // MARK: - Cache location
+
+    @Test func defaultCacheDirectoryIsNotPurgeableByTheSystem() {
+        // macOS's cache_delete daemon reclaims ~/Library/Caches under disk pressure and
+        // terminates the owning app to do it. The image cache must live outside it.
+        let path = ImageCacheManager.defaultCacheDirectory.path
+        #expect(!path.contains("/Library/Caches/"))
+        #expect(path.contains("/Application Support/"))
+    }
+
+    @Test func legacyCacheDirectoryPointsAtTheOldCachesLocation() {
+        let path = ImageCacheManager.legacyCacheDirectory.path
+        #expect(path.contains("/Library/Caches/"))
+    }
+
+    // MARK: - Which keys survive cache cleanup
+
+    @Test func retainedKeysCoverEveryPooledAsset() {
+        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: ["a", "b"], liveWallpaperURL: nil)
+        #expect(keys == [ImageCacheManager.cacheKey(for: "a"), ImageCacheManager.cacheKey(for: "b")])
+    }
+
+    @Test func retainedKeysIncludeTheLiveWallpaperFile() {
+        // Gradients are regenerated each shuffle, but the one macOS is currently displaying
+        // is referenced by path and reapplied on space change — deleting it breaks reapply.
+        let live = URL(fileURLWithPath: "/tmp/PhotoDriftImages/gradient_abc.jpg.png")
+        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: ["a"], liveWallpaperURL: live)
+        #expect(keys.contains("gradient_abc.jpg.png"))
+        #expect(keys.contains(ImageCacheManager.cacheKey(for: "a")))
+    }
+
+    @Test func retainedKeysAreJustTheLiveWallpaperWhenPoolIsEmpty() {
+        let live = URL(fileURLWithPath: "/tmp/PhotoDriftImages/gradient_solo.jpg.png")
+        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: [], liveWallpaperURL: live)
+        #expect(keys == ["gradient_solo.jpg.png"])
+    }
+
+    @Test func retainedKeysAreEmptyWithNoPoolAndNoLiveWallpaper() {
+        #expect(ShuffleEngine.retainedCacheKeys(forAssetIDs: [], liveWallpaperURL: nil).isEmpty)
+    }
+
+    @Test func aStaleGradientIsNotRetained() async throws {
+        // The previous shuffle's gradient must be collectable once it is no longer live.
+        let (manager, dir) = makeTempCache()
+        defer { cleanup(dir) }
+
+        _ = try await manager.store(data: Data("old".utf8), forKey: "gradient_old.jpg.png")
+        _ = try await manager.store(data: Data("live".utf8), forKey: "gradient_live.jpg.png")
+
+        let live = dir.appendingPathComponent("gradient_live.jpg.png")
+        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: [], liveWallpaperURL: live)
+        await manager.removeStaleEntries(validKeys: keys)
+
+        #expect(await manager.retrieve(forKey: "gradient_old.jpg.png") == nil)
+        #expect(await manager.retrieve(forKey: "gradient_live.jpg.png") != nil)
+    }
+
+    @Test func gradientDirectoryIsTheSameNonPurgeableDirectoryAsTheImageCache() {
+        // Composited gradients are handed straight to WallpaperService as the live
+        // wallpaper file — they must not sit anywhere the system can purge.
+        #expect(ShuffleEngine.gradientDirectory == ImageCacheManager.defaultCacheDirectory)
+    }
+
+    // MARK: - Migration off the purgeable cache location
+
+    private func makeMigrationPair() -> (legacy: URL, current: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PhotoDriftMigration-\(UUID().uuidString)", isDirectory: true)
+        return (
+            root.appendingPathComponent("legacy", isDirectory: true),
+            root.appendingPathComponent("current", isDirectory: true)
+        )
+    }
+
+    private func write(_ contents: String, named name: String, in dir: URL) throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(contents.utf8).write(to: dir.appendingPathComponent(name))
+    }
+
+    @Test func migrationMovesLegacyFilesIntoTheNewDirectory() throws {
+        let (legacy, current) = makeMigrationPair()
+        defer { cleanup(legacy.deletingLastPathComponent()) }
+
+        try write("cached image", named: "a.jpg", in: legacy)
+        try FileManager.default.createDirectory(at: current, withIntermediateDirectories: true)
+
+        ImageCacheManager.migrateIfNeeded(from: legacy, to: current)
+
+        let moved = current.appendingPathComponent("a.jpg")
+        #expect(FileManager.default.fileExists(atPath: moved.path))
+        #expect(try String(contentsOf: moved, encoding: .utf8) == "cached image")
+    }
+
+    @Test func migrationRemovesTheLegacyDirectory() throws {
+        let (legacy, current) = makeMigrationPair()
+        defer { cleanup(legacy.deletingLastPathComponent()) }
+
+        try write("x", named: "a.jpg", in: legacy)
+        try FileManager.default.createDirectory(at: current, withIntermediateDirectories: true)
+
+        ImageCacheManager.migrateIfNeeded(from: legacy, to: current)
+
+        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    }
+
+    @Test func migrationKeepsExistingFileWhenBothLocationsHaveTheSameKey() throws {
+        let (legacy, current) = makeMigrationPair()
+        defer { cleanup(legacy.deletingLastPathComponent()) }
+
+        try write("stale", named: "a.jpg", in: legacy)
+        try write("fresh", named: "a.jpg", in: current)
+
+        ImageCacheManager.migrateIfNeeded(from: legacy, to: current)
+
+        let kept = current.appendingPathComponent("a.jpg")
+        #expect(try String(contentsOf: kept, encoding: .utf8) == "fresh")
+        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    }
+
+    @Test func migrationIsANoOpWhenLegacyDirectoryIsAbsent() throws {
+        let (legacy, current) = makeMigrationPair()
+        defer { cleanup(legacy.deletingLastPathComponent()) }
+
+        try write("fresh", named: "a.jpg", in: current)
+
+        ImageCacheManager.migrateIfNeeded(from: legacy, to: current)
+
+        #expect(try String(contentsOf: current.appendingPathComponent("a.jpg"), encoding: .utf8) == "fresh")
+    }
+
+    @Test func migrationDoesNotDeleteFilesWhenSourceAndDestinationMatch() throws {
+        let (_, current) = makeMigrationPair()
+        defer { cleanup(current.deletingLastPathComponent()) }
+
+        try write("fresh", named: "a.jpg", in: current)
+
+        ImageCacheManager.migrateIfNeeded(from: current, to: current)
+
+        #expect(FileManager.default.fileExists(atPath: current.appendingPathComponent("a.jpg").path))
+    }
+
     // MARK: - LRU Eviction
 
     @Test func evictionDeletesOldestFilesWhenOverSizeLimit() async throws {

@@ -25,6 +25,7 @@ final class ShuffleEngine {
     private let photoObserver = PhotoLibraryObserver()
     private var lastAppliedWallpaperURL: URL?
     private var lastAppliedWallpaperScaling: WallpaperScaling = .fitToScreen
+    private var lastGradientURL: URL?
     private var lastSpaceReapplyDate: Date = .distantPast
 
     init(modelContainer: ModelContainer) {
@@ -63,11 +64,26 @@ final class ShuffleEngine {
         postStateChange()
     }
 
+    /// Files that must survive cache cleanup: one per pooled asset, plus the wallpaper macOS
+    /// is currently displaying. Gradients are regenerated every shuffle and are otherwise
+    /// collectable, but the live one is referenced by path — the system reads it back, and
+    /// `handleActiveSpaceChanged()` reapplies it — so deleting it breaks the desktop.
+    static func retainedCacheKeys(forAssetIDs assetIDs: [String], liveWallpaperURL: URL?) -> Set<String> {
+        var keys = Set(assetIDs.map { ImageCacheManager.cacheKey(for: $0) })
+        if let liveWallpaperURL {
+            keys.insert(liveWallpaperURL.lastPathComponent)
+        }
+        return keys
+    }
+
     private func cleanStaleCacheEntries() {
         Task {
             do {
                 let pool = try await unifiedPool.buildPool()
-                let validKeys = Set(pool.map { ImageCacheManager.cacheKey(for: $0.id) })
+                let validKeys = Self.retainedCacheKeys(
+                    forAssetIDs: pool.map(\.id),
+                    liveWallpaperURL: lastAppliedWallpaperURL
+                )
                 await ImageCacheManager.shared.removeStaleEntries(validKeys: validKeys)
             } catch {
                 // Non-critical — stale entries will be evicted by LRU
@@ -287,10 +303,10 @@ final class ShuffleEngine {
         }
     }
 
-    private static let gradientDirectory: URL = {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        return caches.appendingPathComponent("PhotoDriftImages", isDirectory: true)
-    }()
+    /// Composited gradients are written here and handed to `WallpaperService` as the live
+    /// wallpaper file, so they share the image cache's non-purgeable directory rather than
+    /// deriving their own path — see `ImageCacheManager.defaultCacheDirectory`.
+    static let gradientDirectory: URL = ImageCacheManager.defaultCacheDirectory
 
     private func setWallpaper(
         imageData: Data,
@@ -305,6 +321,7 @@ final class ShuffleEngine {
                 let key = ImageCacheManager.cacheKey(for: assetID)
                 let name = "gradient_\(key).png"
                 let url = Self.gradientDirectory.appendingPathComponent(name)
+                try FileManager.default.createDirectory(at: Self.gradientDirectory, withIntermediateDirectories: true)
                 try composited.write(to: url)
                 let warning = try WallpaperService.setWallpaper(
                     from: url,
@@ -313,6 +330,7 @@ final class ShuffleEngine {
                 )
                 lastAppliedWallpaperURL = url
                 lastAppliedWallpaperScaling = .fillScreen
+                retirePreviousGradient(replacedBy: url)
                 return warning
             }
         }
@@ -323,7 +341,17 @@ final class ShuffleEngine {
         )
         lastAppliedWallpaperURL = rawURL
         lastAppliedWallpaperScaling = scaling
+        retirePreviousGradient(replacedBy: rawURL)
         return warning
+    }
+
+    /// Gradients are regenerated per shuffle, so the outgoing one is dropped as soon as its
+    /// replacement is live. Deleting only after the new wallpaper is applied means the file
+    /// macOS is reading is never the one being removed.
+    private func retirePreviousGradient(replacedBy url: URL) {
+        defer { lastGradientURL = url.lastPathComponent.hasPrefix("gradient_") ? url : nil }
+        guard let previous = lastGradientURL, previous != url else { return }
+        try? FileManager.default.removeItem(at: previous)
     }
 
     private func wallpaperWarningMessage(from warning: WallpaperService.Warning?) -> String? {
