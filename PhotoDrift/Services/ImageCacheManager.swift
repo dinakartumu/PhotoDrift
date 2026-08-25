@@ -9,20 +9,69 @@ actor ImageCacheManager {
     }
     static let shared = ImageCacheManager()
 
+    private static let directoryName = "PhotoDriftImages"
+
+    /// Cached images live in Application Support, not Caches.
+    ///
+    /// macOS reclaims disk space by purging sandboxed apps' container `Caches` directories,
+    /// and it terminates the owning app first to do it — the app dies with no crash report,
+    /// only an `OS_REASON_RUNNINGBOARD` / `CacheDeleteAppContainerCaches` exit reason. A 500 MB
+    /// image cache made PhotoDrift the biggest target on the system. These files back the
+    /// wallpaper currently on screen, so they aren't disposable; `evictIfNeeded()` bounds them
+    /// instead.
+    static var defaultCacheDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent(directoryName, isDirectory: true)
+    }
+
+    /// Where images used to be cached, before the move off the system-purgeable location.
+    static var legacyCacheDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent(directoryName, isDirectory: true)
+    }
+
     private let maxBytes: UInt64
     private let cacheDirectory: URL
 
     private init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        cacheDirectory = caches.appendingPathComponent("PhotoDriftImages", isDirectory: true)
+        cacheDirectory = Self.defaultCacheDirectory
         maxBytes = 500 * 1024 * 1024 // 500 MB
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        Self.prepareDirectory(at: cacheDirectory)
+        Self.migrateIfNeeded(from: Self.legacyCacheDirectory, to: cacheDirectory)
     }
 
     init(cacheDirectory: URL, maxBytes: UInt64 = 500 * 1024 * 1024) {
         self.cacheDirectory = cacheDirectory
         self.maxBytes = maxBytes
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        Self.prepareDirectory(at: cacheDirectory)
+    }
+
+    private static func prepareDirectory(at url: URL) {
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        var url = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+    }
+
+    /// One-time move of images left in the old, system-purgeable cache location.
+    /// Files already present at the destination win — they're at least as fresh as
+    /// whatever the previous build left behind.
+    static func migrateIfNeeded(from legacyDirectory: URL, to directory: URL) {
+        let fm = FileManager.default
+        guard legacyDirectory.standardizedFileURL != directory.standardizedFileURL,
+              let contents = try? fm.contentsOfDirectory(at: legacyDirectory, includingPropertiesForKeys: nil)
+        else { return }
+
+        for url in contents {
+            let destination = directory.appendingPathComponent(url.lastPathComponent)
+            if fm.fileExists(atPath: destination.path) {
+                try? fm.removeItem(at: url)
+            } else {
+                try? fm.moveItem(at: url, to: destination)
+            }
+        }
+        try? fm.removeItem(at: legacyDirectory)
     }
 
     func store(data: Data, forKey key: String) throws -> URL {
