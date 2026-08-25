@@ -65,11 +65,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "photo.on.rectangle.angled", accessibilityDescription: "PhotoDrift")
+            button.image = Self.statusItemImage()
         }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+    }
+
+    /// The menu bar glyph.
+    ///
+    /// `photo.on.rectangle.angled` carried an angled frame plus an interior mountain and
+    /// sun, none of which resolve in the ~16pt the menu bar affords — it rendered as a
+    /// blob. `rectangle.stack` keeps the deck reading of the app icon with no interior
+    /// detail. It is intrinsically 22pt tall, which crowds the bar, so scale to the menu
+    /// bar's height and preserve the aspect. Template mode lets AppKit tint the glyph for
+    /// light and dark bars and for the highlighted state while the menu is open.
+    static func statusItemImage() -> NSImage? {
+        guard let image = NSImage(systemSymbolName: "rectangle.stack", accessibilityDescription: "PhotoDrift"),
+              image.size.height > 0
+        else { return nil }
+
+        let height: CGFloat = 16
+        let width = (height * image.size.width / image.size.height).rounded()
+        image.size = NSSize(width: width, height: height)
+        image.isTemplate = true
+        return image
     }
 
     @objc private func engineStateChanged() {
