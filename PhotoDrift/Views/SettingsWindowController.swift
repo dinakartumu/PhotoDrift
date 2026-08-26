@@ -543,9 +543,7 @@ final class SourceSettingsViewController: NSViewController {
             await MainActor.run {
                 let context = ModelContext(self.modelContainer)
                 let currentSettings = AppSettings.current(in: context)
-                currentSettings.adobeAccessToken = nil
-                currentSettings.adobeRefreshToken = nil
-                currentSettings.adobeTokenExpiry = nil
+                // The tokens themselves are cleared from the Keychain by signOut() above.
                 currentSettings.lightroomEnabled = false
 
                 let descriptor = FetchDescriptor<Album>(
