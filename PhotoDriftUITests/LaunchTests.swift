@@ -9,6 +9,11 @@ final class LaunchTests: XCTestCase {
     @MainActor
     func testAppLaunchesAndStaysRunning() {
         let app = XCUIApplication()
+        // An instance left behind by a previous run makes launch() racy, which is the
+        // usual source of intermittent failures in tests like this one.
+        if app.state != .notRunning {
+            app.terminate()
+        }
         app.launch()
 
         XCTAssertNotEqual(app.state, .notRunning, "app did not reach a running state")
