@@ -1,4 +1,6 @@
-import AuthenticationServices
+// ASWebAuthenticationSession predates strict concurrency annotation; @preconcurrency keeps
+// its un-annotated types from producing Sendable warnings at every use site.
+@preconcurrency import AuthenticationServices
 import SwiftData
 
 actor AdobeAuthManager {
@@ -9,26 +11,56 @@ actor AdobeAuthManager {
     private var tokenExpiry: Date?
     private var didLogNetworkDiagnostics = false
     private var modelContainer: ModelContainer?
+    private let tokenStore = KeychainTokenStore()
     private var activeSession: ASWebAuthenticationSession?
     private var activeAnchorProvider: AnchorProvider?
     private var authContinuation: CheckedContinuation<URL, Error>?
+    /// Held only for the duration of one authorization request.
+    private var pendingVerifier: String?
+    private var pendingState: String?
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
     }
 
-    func signIn(from anchor: ASPresentationAnchor) async throws -> String {
+    /// Builds the authorization request. Only the derived challenge travels to Adobe — the
+    /// verifier stays on device until the token exchange proves we started the flow.
+    static func authorizationURL(pkce: PKCE, state: String) -> URL {
         var components = URLComponents(url: AdobeConfig.authorizationEndpoint, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: AdobeConfig.clientID),
             URLQueryItem(name: "scope", value: AdobeConfig.scopes),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "redirect_uri", value: AdobeConfig.redirectURI),
-            URLQueryItem(name: "code_challenge", value: AdobeConfig.codeChallenge),
+            URLQueryItem(name: "code_challenge", value: pkce.challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "state", value: state),
         ]
+        return components.url!
+    }
 
-        let authURL = components.url!
+    /// Extracts the authorization code, rejecting callbacks whose `state` does not match the
+    /// value we sent. Without this check a third party could feed us their own code.
+    static func authorizationCode(from url: URL, expectedState: String) throws -> String {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        let value = { (name: String) in items?.first { $0.name == name }?.value }
+
+        guard let state = value("state"), state == expectedState else {
+            throw AdobeAuthError.stateMismatch
+        }
+        guard let code = value("code") else {
+            throw AdobeAuthError.noAuthCode
+        }
+        return code
+    }
+
+    func signIn(from anchor: ASPresentationAnchor) async throws -> String {
+        let pkce = PKCE.generate()
+        let state = OAuthRandom.urlSafeString(byteCount: 16)
+        pendingVerifier = pkce.verifier
+        pendingState = state
+
+        let authURL = Self.authorizationURL(pkce: pkce, state: state)
         let anchorProvider = AnchorProvider(anchor: anchor)
         self.activeAnchorProvider = anchorProvider
 
@@ -58,12 +90,13 @@ actor AdobeAuthManager {
             }
         }
 
-        guard let code = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "code" })?.value else {
-            throw AdobeAuthError.noAuthCode
+        defer { clearPendingAuth() }
+        guard let expectedState = pendingState, let verifier = pendingVerifier else {
+            throw AdobeAuthError.noCallback
         }
+        let code = try Self.authorizationCode(from: callbackURL, expectedState: expectedState)
 
-        return try await exchangeCodeForTokens(code: code)
+        return try await exchangeCodeForTokens(code: code, verifier: verifier)
     }
 
     /// Called from onOpenURL as a backup when ASWebAuthenticationSession
@@ -85,7 +118,12 @@ actor AdobeAuthManager {
         }
     }
 
-    private func exchangeCodeForTokens(code: String) async throws -> String {
+    private func clearPendingAuth() {
+        pendingVerifier = nil
+        pendingState = nil
+    }
+
+    private func exchangeCodeForTokens(code: String, verifier: String) async throws -> String {
         await logNetworkDiagnosticsIfNeeded()
         var request = URLRequest(url: AdobeConfig.tokenEndpoint)
         request.httpMethod = "POST"
@@ -95,7 +133,7 @@ actor AdobeAuthManager {
             "grant_type=authorization_code",
             "client_id=\(AdobeConfig.clientID)",
             "code=\(code)",
-            "code_verifier=\(AdobeConfig.codeVerifier)",
+            "code_verifier=\(verifier)",
             "redirect_uri=\(AdobeConfig.redirectURI)",
         ].joined(separator: "&")
         request.httpBody = body.data(using: .utf8)
@@ -110,13 +148,13 @@ actor AdobeAuthManager {
             self.accessToken = nil
             self.refreshToken = nil
             self.tokenExpiry = nil
-            await persistTokensIfPossible()
+            persistTokens()
             throw AdobeAuthError.noRefreshToken
         }
         self.accessToken = tokenResponse.accessToken
         self.refreshToken = refresh
         self.tokenExpiry = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
-        await persistTokensIfPossible()
+        persistTokens()
 
         return tokenResponse.accessToken
     }
@@ -125,7 +163,7 @@ actor AdobeAuthManager {
         guard let refreshToken else {
             accessToken = nil
             tokenExpiry = nil
-            await persistTokensIfPossible()
+            persistTokens()
             throw AdobeAuthError.noRefreshToken
         }
 
@@ -152,7 +190,7 @@ actor AdobeAuthManager {
             self.refreshToken = newRefresh
         }
         self.tokenExpiry = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
-        await persistTokensIfPossible()
+        persistTokens()
 
         return tokenResponse.accessToken
     }
@@ -164,26 +202,59 @@ actor AdobeAuthManager {
         return try await refreshAccessToken()
     }
 
-    func loadTokens(accessToken: String?, refreshToken: String?, tokenExpiry: Date?) {
-        self.accessToken = accessToken
-        self.refreshToken = refreshToken
-        self.tokenExpiry = tokenExpiry
+    /// Loads persisted tokens, first moving across anything left behind in the pre-Keychain
+    /// SwiftData fields.
+    func restoreTokens() async {
+        if let migrated = await migrateLegacyTokensIfNeeded() {
+            apply(migrated)
+            persistTokens()
+            return
+        }
+        if let stored = try? tokenStore.load() {
+            apply(stored)
+        }
     }
 
     func signOut() {
         accessToken = nil
         refreshToken = nil
         tokenExpiry = nil
+        try? tokenStore.clear()
     }
 
     var isSignedIn: Bool {
-        if refreshToken != nil {
-            return true
+        currentTokens.isSignedIn()
+    }
+
+    private var currentTokens: AdobeTokens {
+        AdobeTokens(accessToken: accessToken, refreshToken: refreshToken, expiry: tokenExpiry)
+    }
+
+    private func apply(_ tokens: AdobeTokens) {
+        accessToken = tokens.accessToken
+        refreshToken = tokens.refreshToken
+        tokenExpiry = tokens.expiry
+    }
+
+    /// Reads the deprecated SwiftData token fields once, hands their contents to the Keychain
+    /// and blanks them, so a plaintext refresh token does not linger in the store.
+    private func migrateLegacyTokensIfNeeded() async -> AdobeTokens? {
+        guard let modelContainer else { return nil }
+        return await MainActor.run {
+            let context = ModelContext(modelContainer)
+            let settings = AppSettings.current(in: context)
+            guard let legacy = AdobeTokens.legacy(
+                accessToken: settings.adobeAccessToken,
+                refreshToken: settings.adobeRefreshToken,
+                expiry: settings.adobeTokenExpiry
+            ) else { return nil }
+
+            settings.adobeAccessToken = nil
+            settings.adobeRefreshToken = nil
+            settings.adobeTokenExpiry = nil
+            try? context.save()
+            return legacy
         }
-        if accessToken != nil, let expiry = tokenExpiry {
-            return Date() < expiry
-        }
-        return false
     }
 
     private func clearSession() {
@@ -191,19 +262,8 @@ actor AdobeAuthManager {
         activeAnchorProvider = nil
     }
 
-    private func persistTokensIfPossible() async {
-        guard let modelContainer else { return }
-        let accessToken = self.accessToken
-        let refreshToken = self.refreshToken
-        let tokenExpiry = self.tokenExpiry
-        await MainActor.run {
-            let context = ModelContext(modelContainer)
-            let settings = AppSettings.current(in: context)
-            settings.adobeAccessToken = accessToken
-            settings.adobeRefreshToken = refreshToken
-            settings.adobeTokenExpiry = tokenExpiry
-            try? context.save()
-        }
+    private func persistTokens() {
+        try? tokenStore.save(currentTokens)
     }
 
     private func logNetworkDiagnosticsIfNeeded() async {
@@ -214,7 +274,7 @@ actor AdobeAuthManager {
     }
 }
 
-private struct TokenResponse: Decodable {
+nonisolated private struct TokenResponse: Decodable {
     let accessToken: String
     let refreshToken: String?
     let expiresIn: Int
@@ -226,17 +286,19 @@ private struct TokenResponse: Decodable {
     }
 }
 
-enum AdobeAuthError: Error, LocalizedError, Equatable {
+nonisolated enum AdobeAuthError: Error, LocalizedError, Equatable {
     case noCallback
     case noAuthCode
     case tokenExchangeFailed
     case tokenRefreshFailed
     case noRefreshToken
+    case stateMismatch
 
     var errorDescription: String? {
         switch self {
         case .noCallback: "Authentication callback not received"
         case .noAuthCode: "No authorization code in callback"
+        case .stateMismatch: "Authentication response did not match this request. Please try signing in again."
         case .tokenExchangeFailed: "Failed to exchange code for tokens"
         case .tokenRefreshFailed: "Failed to refresh access token"
         case .noRefreshToken: "No refresh token available. Please sign in again."
@@ -244,7 +306,7 @@ enum AdobeAuthError: Error, LocalizedError, Equatable {
     }
 }
 
-final class AnchorProvider: NSObject, ASWebAuthenticationPresentationContextProviding, @unchecked Sendable {
+nonisolated final class AnchorProvider: NSObject, ASWebAuthenticationPresentationContextProviding, @unchecked Sendable {
     let anchor: ASPresentationAnchor
 
     init(anchor: ASPresentationAnchor) {
