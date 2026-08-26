@@ -53,15 +53,30 @@ enum AdobeNetworkDiagnostics {
         return boolValue
     }
 
+    /// Lets exactly one of several racing callers proceed. Resuming a CheckedContinuation
+    /// twice traps, so the once-only guarantee is enforced rather than left to the fact that
+    /// today's callers happen to share a serial queue.
+    nonisolated private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var claimed = false
+
+        func claim() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            if claimed { return false }
+            claimed = true
+            return true
+        }
+    }
+
     private static func firstPathUpdate(timeoutSeconds: TimeInterval) async -> NWPath? {
         await withCheckedContinuation { continuation in
             let monitor = NWPathMonitor()
             let queue = DispatchQueue(label: "AdobeNetworkDiagnostics.NWPathMonitor")
-            var didResume = false
+            let once = ResumeOnce()
 
-            func resume(with path: NWPath?) {
-                guard !didResume else { return }
-                didResume = true
+            @Sendable func resume(with path: NWPath?) {
+                guard once.claim() else { return }
                 monitor.cancel()
                 continuation.resume(returning: path)
             }

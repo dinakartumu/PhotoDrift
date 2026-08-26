@@ -68,7 +68,7 @@ actor LightroomAPIClient {
         request.setValue(AdobeConfig.clientID, forHTTPHeaderField: "X-API-Key")
         request.setValue("image/jpeg", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await fetchRendition(request: request)
+        let (data, _) = try await fetchRendition(request: request)
         return data
     }
 

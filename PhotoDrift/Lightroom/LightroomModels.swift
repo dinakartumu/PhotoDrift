@@ -1,6 +1,6 @@
 import Foundation
 
-struct LRCatalog: Decodable {
+nonisolated struct LRCatalog: Decodable {
     let id: String
 
     enum CodingKeys: String, CodingKey {
@@ -8,11 +8,11 @@ struct LRCatalog: Decodable {
     }
 }
 
-struct LRCatalogResponse: Decodable {
+nonisolated struct LRCatalogResponse: Decodable {
     let id: String
 }
 
-struct LRAlbumsResponse: Decodable {
+nonisolated struct LRAlbumsResponse: Decodable {
     let resources: [LRAlbumResource]?
     let links: LRLinks?
 
@@ -27,7 +27,7 @@ struct LRAlbumsResponse: Decodable {
     }
 }
 
-struct LRAlbumAssetsResponse: Decodable {
+nonisolated struct LRAlbumAssetsResponse: Decodable {
     let resources: [LRAssetResource]?
     let links: LRLinks?
 
@@ -50,10 +50,10 @@ struct LRAlbumAssetsResponse: Decodable {
     }
 }
 
-struct LRLinks: Decodable {
+nonisolated struct LRLinks: Decodable {
     let next: LRLink?
 }
 
-struct LRLink: Decodable {
+nonisolated struct LRLink: Decodable {
     let href: String?
 }

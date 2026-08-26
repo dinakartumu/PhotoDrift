@@ -542,19 +542,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func loadSavedTokens() {
-        let context = ModelContext(modelContainer)
-        let settings = AppSettings.current(in: context)
-        let accessToken = settings.adobeAccessToken
-        let refreshToken = settings.adobeRefreshToken
-        let tokenExpiry = settings.adobeTokenExpiry
-        lightroomSignedIn = refreshToken != nil || (accessToken != nil && tokenExpiry.map { Date() < $0 } == true)
+        // Tokens live in the Keychain, so the signed-in state is only known once the actor
+        // has read them back; the menu reflects it as soon as that resolves.
         Task {
             await AdobeAuthManager.shared.configure(modelContainer: modelContainer)
-            await AdobeAuthManager.shared.loadTokens(
-                accessToken: accessToken,
-                refreshToken: refreshToken,
-                tokenExpiry: tokenExpiry
-            )
+            await AdobeAuthManager.shared.restoreTokens()
             let signedIn = await AdobeAuthManager.shared.isSignedIn
             await MainActor.run {
                 self.lightroomSignedIn = signedIn

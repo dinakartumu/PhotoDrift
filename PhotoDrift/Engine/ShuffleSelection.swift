@@ -1,6 +1,6 @@
 import Foundation
 
-struct ShuffleSelection: Sendable {
+nonisolated struct ShuffleSelection: Sendable {
     private(set) var recentHistory: [String] = []
     let maxHistorySize: Int
 
