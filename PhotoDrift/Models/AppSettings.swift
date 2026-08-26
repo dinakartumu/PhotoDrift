@@ -67,7 +67,9 @@ final class AppSettings {
     }
 }
 
-enum WallpaperTargetPreferences {
+/// Reached from `AppSettings`, a SwiftData model that is not main-actor isolated, so this
+/// cannot be either. It only wraps UserDefaults, which is thread-safe.
+nonisolated enum WallpaperTargetPreferences {
     static let defaultsKey = "PhotoDrift.applyToAllDesktops"
 
     static func registerDefaults() {

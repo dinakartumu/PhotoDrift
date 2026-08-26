@@ -67,7 +67,8 @@ actor PhotoKitConnector {
             throw PhotoKitError.assetNotFound
         }
 
-        let targetSize = ScreenUtility.targetSize
+        // NSScreen is main-actor state; this actor must hop rather than read it directly.
+        let targetSize = await MainActor.run { ScreenUtility.targetSize }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
