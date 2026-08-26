@@ -378,13 +378,22 @@ final class ShuffleEngine {
         postStateChange()
     }
 
-    private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {
-        Task.detached { [weak self] in
-            guard let self else { return }
-            let candidates = pool.filter { !self.selection.recentHistory.contains($0.id) }
-                .shuffled()
-                .prefix(3)
+    /// Entries worth warming the cache with: not shown recently, capped, in random order.
+    static func prefetchCandidates(
+        from pool: [UnifiedPool.PoolEntry],
+        excluding recentIDs: [String],
+        limit: Int = 3
+    ) -> [UnifiedPool.PoolEntry] {
+        let recent = Set(recentIDs)
+        return Array(pool.filter { !recent.contains($0.id) }.shuffled().prefix(limit))
+    }
 
+    private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {
+        // Read the history here, on the engine's own actor. Reaching for `selection` from
+        // inside the detached task races the main actor mutating it after each shuffle.
+        let candidates = Self.prefetchCandidates(from: pool, excluding: selection.recentHistory)
+
+        Task.detached {
             for candidate in candidates {
                 let key = ImageCacheManager.cacheKey(for: candidate.id)
                 let cached = await ImageCacheManager.shared.retrieve(forKey: key)
