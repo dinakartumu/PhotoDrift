@@ -106,7 +106,7 @@ enum AdobeNetworkDiagnostics {
         var result: UnsafeMutablePointer<addrinfo>?
         let status = getaddrinfo(host, nil, &hints, &result)
         guard status == 0 else {
-            let message = String(cString: gai_strerror(status))
+            let message = String(validatingCString: gai_strerror(status)) ?? "unknown"
             return DNSResult(addresses: [], error: message, summary: "error")
         }
         defer { freeaddrinfo(result) }
@@ -125,7 +125,9 @@ enum AdobeNetworkDiagnostics {
                 NI_NUMERICHOST
             )
             if infoStatus == 0 {
-                let ip = String(cString: hostname)
+                // Truncate at the null terminator before decoding; String(cString:) is deprecated.
+                let bytes = hostname.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+                let ip = String(decoding: bytes, as: UTF8.self)
                 if !addresses.contains(ip) {
                     addresses.append(ip)
                 }

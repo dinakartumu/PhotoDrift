@@ -68,7 +68,7 @@ final class ShuffleEngine {
     /// is currently displaying. Gradients are regenerated every shuffle and are otherwise
     /// collectable, but the live one is referenced by path — the system reads it back, and
     /// `handleActiveSpaceChanged()` reapplies it — so deleting it breaks the desktop.
-    static func retainedCacheKeys(forAssetIDs assetIDs: [String], liveWallpaperURL: URL?) -> Set<String> {
+    nonisolated static func retainedCacheKeys(forAssetIDs assetIDs: [String], liveWallpaperURL: URL?) -> Set<String> {
         var keys = Set(assetIDs.map { ImageCacheManager.cacheKey(for: $0) })
         if let liveWallpaperURL {
             keys.insert(liveWallpaperURL.lastPathComponent)
@@ -306,7 +306,7 @@ final class ShuffleEngine {
     /// Composited gradients are written here and handed to `WallpaperService` as the live
     /// wallpaper file, so they share the image cache's non-purgeable directory rather than
     /// deriving their own path — see `ImageCacheManager.defaultCacheDirectory`.
-    static let gradientDirectory: URL = ImageCacheManager.defaultCacheDirectory
+    nonisolated static let gradientDirectory: URL = ImageCacheManager.defaultCacheDirectory
 
     private func setWallpaper(
         imageData: Data,
@@ -379,7 +379,8 @@ final class ShuffleEngine {
     }
 
     /// Entries worth warming the cache with: not shown recently, capped, in random order.
-    static func prefetchCandidates(
+    /// Pure over its inputs, so it carries no isolation.
+    nonisolated static func prefetchCandidates(
         from pool: [UnifiedPool.PoolEntry],
         excluding recentIDs: [String],
         limit: Int = 3
