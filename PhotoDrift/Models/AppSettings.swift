@@ -24,6 +24,9 @@ final class AppSettings {
     var shuffleIntervalMinutes: Int
     var photosEnabled: Bool
     var lightroomEnabled: Bool
+    // Retained only so AdobeAuthManager can migrate pre-Keychain installs. These are read
+    // once, copied into the Keychain and blanked — nothing should write to them again.
+    // Removing them outright would require a SwiftData schema migration.
     var adobeAccessToken: String?
     var adobeRefreshToken: String?
     var adobeTokenExpiry: Date?
