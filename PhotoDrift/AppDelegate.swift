@@ -588,7 +588,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.shuffleEngine.handleWake()
+            // `queue: .main` guarantees delivery on the main thread, so the isolation the
+            // compiler cannot see here is real at runtime.
+            MainActor.assumeIsolated {
+                self?.shuffleEngine.handleWake()
+            }
         }
     }
 
@@ -598,7 +602,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.shuffleEngine.handleActiveSpaceChanged()
+            MainActor.assumeIsolated {
+                self?.shuffleEngine.handleActiveSpaceChanged()
+            }
         }
     }
 }

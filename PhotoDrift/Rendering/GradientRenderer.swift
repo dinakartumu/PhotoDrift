@@ -2,7 +2,7 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
-enum GradientRenderer {
+nonisolated enum GradientRenderer {
 
     /// Composites a gradient background with the photo drawn aspect-fit on top.
     /// Returns PNG data sized to `screenSize` (in pixels).

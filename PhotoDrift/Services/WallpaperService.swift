@@ -29,7 +29,7 @@ enum WallpaperService {
         case executionFailed(String)
     }
 
-    static func desktopImageOptions(for scaling: WallpaperScaling) -> [NSWorkspace.DesktopImageOptionKey: Any] {
+    nonisolated static func desktopImageOptions(for scaling: WallpaperScaling) -> [NSWorkspace.DesktopImageOptionKey: Any] {
         switch scaling {
         case .fillScreen:
             return [
@@ -84,7 +84,7 @@ enum WallpaperService {
         }
     }
 
-    static func allDesktopsAppleScript(for url: URL, ensureLaunched: Bool = false) -> String {
+    nonisolated static func allDesktopsAppleScript(for url: URL, ensureLaunched: Bool = false) -> String {
         let escapedPath = escapeForAppleScript(url.path)
         let launchPrefix = ensureLaunched ? """
             launch
@@ -112,7 +112,7 @@ enum WallpaperService {
         """
     }
 
-    static func escapeForAppleScript(_ text: String) -> String {
+    nonisolated static func escapeForAppleScript(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
