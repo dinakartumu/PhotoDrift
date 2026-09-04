@@ -2,6 +2,9 @@ import Testing
 import AppKit
 @testable import PhotoDrift
 
+/// `statusItemImage()` builds AppKit objects and stays main-actor isolated, so these tests
+/// run there rather than loosening the production isolation to suit the test.
+@MainActor
 struct StatusItemTests {
     @Test func statusItemImageIsATemplateSoAppKitCanTintIt() throws {
         let image = try #require(AppDelegate.statusItemImage())

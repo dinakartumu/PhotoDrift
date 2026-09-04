@@ -7,7 +7,7 @@ struct GradientPalette: Equatable {
     let bottomColor: CGColor
 }
 
-enum PaletteExtractor {
+nonisolated enum PaletteExtractor {
 
     static func extract(from imageData: Data) -> GradientPalette? {
         guard let thumbnail = downsample(data: imageData, maxDimension: 80) else { return nil }
