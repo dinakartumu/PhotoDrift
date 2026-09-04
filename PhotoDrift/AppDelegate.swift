@@ -31,6 +31,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         "Update to PhotoDrift \(version)..."
     }
 
+    /// The credits block for the standard About panel. The panel supplies icon, name,
+    /// version, build and copyright from the bundle itself; this adds where to go next.
+    nonisolated static func aboutCredits() -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let credits = NSMutableAttributedString()
+        func append(_ text: String, link: String? = nil) {
+            var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph]
+            if let link, let url = URL(string: link) {
+                attributes[.link] = url
+            }
+            credits.append(NSAttributedString(string: text, attributes: attributes))
+        }
+        append("Wallpaper from your Apple Photos and Lightroom albums.\n\n")
+        append("Website", link: "https://dinakartumu.com/photodrift")
+        append("   ·   ")
+        append("Source on GitHub", link: "https://github.com/dinakartumu/PhotoDrift")
+        append("\n\nUpdates by ")
+        append("Sparkle", link: "https://sparkle-project.org")
+        return credits
+    }
+
+    @objc private func showAbout() {
+        // An LSUIElement app is never active on its own; without this the panel opens
+        // behind whatever the user was looking at.
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: Self.aboutCredits()])
+    }
+
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -230,6 +259,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         updateItem.target = updaterController
         menu.addItem(updateItem)
+
+        // 9c. About
+        let aboutItem = NSMenuItem(title: "About PhotoDrift", action: #selector(showAbout), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
 
         #if DEBUG
         menu.addItem(.separator())
