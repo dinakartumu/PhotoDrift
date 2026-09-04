@@ -34,6 +34,22 @@ struct AutoUpdateTests {
         #expect(silent == false)
     }
 
+    // MARK: - Gentle reminders
+
+    // Since Sparkle 2.2 a scheduled update alert will not steal focus, so on a menu bar app
+    // it can sit unnoticed behind other windows. The app holds such alerts back and offers
+    // the update from the status menu instead; choosing it runs a user-initiated check,
+    // which Sparkle does show in focus.
+
+    @Test func aScheduledAlertIsLeftToSparkleOnlyWhenItWouldBeInFocus() {
+        #expect(AppDelegate.sparkleShouldShowScheduledUpdate(inImmediateFocus: true))
+        #expect(!AppDelegate.sparkleShouldShowScheduledUpdate(inImmediateFocus: false))
+    }
+
+    @Test func theMenuOffersTheHeldBackUpdateByVersion() {
+        #expect(AppDelegate.updateMenuTitle(forVersion: "1.3") == "Update to PhotoDrift 1.3...")
+    }
+
     @Test func sandboxAllowsSparkleXPCServices() throws {
         let task = try #require(SecTaskCreateFromSelf(nil))
         let key = "com.apple.security.temporary-exception.mach-lookup.global-name" as CFString
