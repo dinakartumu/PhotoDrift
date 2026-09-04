@@ -25,7 +25,7 @@ final class ShuffleEngine {
     private let photoObserver = PhotoLibraryObserver()
     private var lastAppliedWallpaperURL: URL?
     private var lastAppliedWallpaperScaling: WallpaperScaling = .fitToScreen
-    private var lastGradientURL: URL?
+    private var lastWallpaperFiles: WallpaperFiles?
     private var lastSpaceReapplyDate: Date = .distantPast
 
     init(modelContainer: ModelContainer) {
@@ -74,6 +74,22 @@ final class ShuffleEngine {
             keys.insert(liveWallpaperURL.lastPathComponent)
         }
         return keys
+    }
+
+    /// What one shuffle wrote to disk: the raw asset and, in fit-to-screen mode, the composited
+    /// gradient that macOS is actually displaying.
+    nonisolated struct WallpaperFiles: Equatable {
+        let raw: URL
+        let gradient: URL?
+    }
+
+    /// The outgoing shuffle's files that can be deleted now that `current` is on screen.
+    /// Anything `current` still references is kept: a one-photo pool picks the same asset
+    /// every time, and deleting the file macOS is displaying breaks the desktop.
+    nonisolated static func filesToRetire(previous: WallpaperFiles?, replacedBy current: WallpaperFiles) -> [URL] {
+        guard let previous else { return [] }
+        let stillLive = Set([current.raw, current.gradient].compactMap { $0 })
+        return [previous.raw, previous.gradient].compactMap { $0 }.filter { !stillLive.contains($0) }
     }
 
     private func cleanStaleCacheEntries() {
@@ -330,7 +346,7 @@ final class ShuffleEngine {
                 )
                 lastAppliedWallpaperURL = url
                 lastAppliedWallpaperScaling = .fillScreen
-                retirePreviousGradient(replacedBy: url)
+                retirePreviousWallpaper(replacedBy: WallpaperFiles(raw: rawURL, gradient: url))
                 return warning
             }
         }
@@ -341,17 +357,19 @@ final class ShuffleEngine {
         )
         lastAppliedWallpaperURL = rawURL
         lastAppliedWallpaperScaling = scaling
-        retirePreviousGradient(replacedBy: rawURL)
+        retirePreviousWallpaper(replacedBy: WallpaperFiles(raw: rawURL, gradient: nil))
         return warning
     }
 
-    /// Gradients are regenerated per shuffle, so the outgoing one is dropped as soon as its
-    /// replacement is live. Deleting only after the new wallpaper is applied means the file
-    /// macOS is reading is never the one being removed.
-    private func retirePreviousGradient(replacedBy url: URL) {
-        defer { lastGradientURL = url.lastPathComponent.hasPrefix("gradient_") ? url : nil }
-        guard let previous = lastGradientURL, previous != url else { return }
-        try? FileManager.default.removeItem(at: previous)
+    /// A shown photo is not kept around: once its replacement is live, the outgoing raw file
+    /// and gradient are deleted. The cache therefore holds only the wallpaper on screen plus
+    /// whatever prefetch has warmed. Deleting only after the new wallpaper is applied means
+    /// the file macOS is reading is never the one being removed.
+    private func retirePreviousWallpaper(replacedBy current: WallpaperFiles) {
+        for url in Self.filesToRetire(previous: lastWallpaperFiles, replacedBy: current) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        lastWallpaperFiles = current
     }
 
     private func wallpaperWarningMessage(from warning: WallpaperService.Warning?) -> String? {
