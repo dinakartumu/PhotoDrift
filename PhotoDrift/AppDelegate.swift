@@ -12,13 +12,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lightroomSignedIn = false
 
     /// Sparkle's stock updater: daily background checks against `SUFeedURL`, its own
-    /// dialogs for "update available" and "Install and Relaunch". Started here rather than
-    /// in `applicationDidFinishLaunching` so it exists before the first menu is built.
-    private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
+    /// dialogs for "update available" and "Install and Relaunch". Created in
+    /// `applicationDidFinishLaunching` because it needs `self` as the user-driver delegate.
+    private var updaterController: SPUStandardUpdaterController!
+
+    /// A scheduled check found this version but Sparkle could not show the alert in focus,
+    /// so it is offered from the status menu instead. See the delegate extension below.
+    private var pendingUpdateVersion: String?
+
+    /// Sparkle 2.2+ refuses to let a scheduled update alert steal focus. At launch nothing
+    /// else is in focus and the alert is fine; at any other time a menu bar app's alert would
+    /// land behind whatever the user is doing, so it is held back for the menu instead.
+    nonisolated static func sparkleShouldShowScheduledUpdate(inImmediateFocus immediateFocus: Bool) -> Bool {
+        immediateFocus
+    }
+
+    nonisolated static func updateMenuTitle(forVersion version: String) -> String {
+        "Update to PhotoDrift \(version)..."
+    }
 
     static func main() {
         let app = NSApplication.shared
@@ -39,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         shuffleEngine = ShuffleEngine(modelContainer: modelContainer)
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: self
+        )
         loadSavedTokens()
         observeWake()
         observeActiveSpaceChanges()
@@ -205,8 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(settingsItem)
 
         // 9b. Check for Updates — Sparkle enables and disables this itself while a check runs.
+        // When a scheduled check has found an update that could not be shown in focus, the
+        // item names it; choosing it runs a user-initiated check, which Sparkle does show.
         let updateItem = NSMenuItem(
-            title: "Check for Updates...",
+            title: pendingUpdateVersion.map(Self.updateMenuTitle(forVersion:)) ?? "Check for Updates...",
             action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
             keyEquivalent: ""
         )
@@ -690,5 +708,33 @@ private class CheckmarkMenuItemView: NSView {
         isChecked.toggle()
         checkLabel.isHidden = !isChecked
         onToggle?(albumID, isChecked)
+    }
+}
+
+// MARK: - Sparkle gentle reminders
+
+/// Sparkle's user driver asks before showing a *scheduled* update alert. Letting it through
+/// only when it can take focus, and otherwise parking the version in the menu, is what
+/// Sparkle calls "gentle reminders"; without them a background app's alerts go unnoticed.
+extension AppDelegate: @preconcurrency SPUStandardUserDriverDelegate {
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        Self.sparkleShouldShowScheduledUpdate(inImmediateFocus: immediateFocus)
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        pendingUpdateVersion = handleShowingUpdate ? nil : update.displayVersionString
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        pendingUpdateVersion = nil
     }
 }

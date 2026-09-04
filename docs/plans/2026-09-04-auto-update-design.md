@@ -25,6 +25,14 @@ Sparkle 2 (2.9.x) via Swift Package Manager. Alternatives considered:
   `SUEnableAutomaticChecks = YES` so a windowless agent app does not show
   Sparkle's second-launch permission prompt. Installs are never silent:
   `SUAutomaticallyUpdate` stays at its default of NO.
+- Gentle reminders. Since Sparkle 2.2 a *scheduled* update alert will not steal
+  focus, so on a menu bar app it can sit unnoticed behind other windows. The
+  app delegate is Sparkle's user-driver delegate: a scheduled alert is left to
+  Sparkle only when it can be shown in immediate focus (in practice, at
+  launch); otherwise the found version is parked and the menu item reads
+  "Update to PhotoDrift X.Y...". Choosing it runs a user-initiated check, which
+  Sparkle always shows in focus. Found during the dry run, not in the original
+  design.
 - Entitlements: `com.apple.security.temporary-exception.mach-lookup.global-name`
   with `$(PRODUCT_BUNDLE_IDENTIFIER)-spks` and `-spki`. No downloader XPC
   service; the app already has `com.apple.security.network.client`.
