@@ -1,7 +1,10 @@
 @preconcurrency import Photos
 @preconcurrency import Combine
 
-final class PhotoLibraryObserver: NSObject, PHPhotoLibraryChangeObserver {
+/// PhotoKit delivers `photoLibraryDidChange` on an arbitrary queue, so this observer cannot
+/// be main-actor isolated. Nothing here needs to be: the subject is thread-safe to send on,
+/// and `debouncedChanges` already hops to the main queue for delivery.
+nonisolated final class PhotoLibraryObserver: NSObject, PHPhotoLibraryChangeObserver {
     let changes = PassthroughSubject<Void, Never>()
 
     private(set) lazy var debouncedChanges: AnyPublisher<Void, Never> = {

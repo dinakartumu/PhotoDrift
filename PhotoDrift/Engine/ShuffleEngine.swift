@@ -68,7 +68,7 @@ final class ShuffleEngine {
     /// is currently displaying. Gradients are regenerated every shuffle and are otherwise
     /// collectable, but the live one is referenced by path — the system reads it back, and
     /// `handleActiveSpaceChanged()` reapplies it — so deleting it breaks the desktop.
-    static func retainedCacheKeys(forAssetIDs assetIDs: [String], liveWallpaperURL: URL?) -> Set<String> {
+    nonisolated static func retainedCacheKeys(forAssetIDs assetIDs: [String], liveWallpaperURL: URL?) -> Set<String> {
         var keys = Set(assetIDs.map { ImageCacheManager.cacheKey(for: $0) })
         if let liveWallpaperURL {
             keys.insert(liveWallpaperURL.lastPathComponent)
@@ -306,7 +306,7 @@ final class ShuffleEngine {
     /// Composited gradients are written here and handed to `WallpaperService` as the live
     /// wallpaper file, so they share the image cache's non-purgeable directory rather than
     /// deriving their own path — see `ImageCacheManager.defaultCacheDirectory`.
-    static let gradientDirectory: URL = ImageCacheManager.defaultCacheDirectory
+    nonisolated static let gradientDirectory: URL = ImageCacheManager.defaultCacheDirectory
 
     private func setWallpaper(
         imageData: Data,
@@ -378,13 +378,23 @@ final class ShuffleEngine {
         postStateChange()
     }
 
-    private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {
-        Task.detached { [weak self] in
-            guard let self else { return }
-            let candidates = pool.filter { !self.selection.recentHistory.contains($0.id) }
-                .shuffled()
-                .prefix(3)
+    /// Entries worth warming the cache with: not shown recently, capped, in random order.
+    /// Pure over its inputs, so it carries no isolation.
+    nonisolated static func prefetchCandidates(
+        from pool: [UnifiedPool.PoolEntry],
+        excluding recentIDs: [String],
+        limit: Int = 3
+    ) -> [UnifiedPool.PoolEntry] {
+        let recent = Set(recentIDs)
+        return Array(pool.filter { !recent.contains($0.id) }.shuffled().prefix(limit))
+    }
 
+    private func prefetchInBackground(pool: [UnifiedPool.PoolEntry]) {
+        // Read the history here, on the engine's own actor. Reaching for `selection` from
+        // inside the detached task races the main actor mutating it after each shuffle.
+        let candidates = Self.prefetchCandidates(from: pool, excluding: selection.recentHistory)
+
+        Task.detached {
             for candidate in candidates {
                 let key = ImageCacheManager.cacheKey(for: candidate.id)
                 let cached = await ImageCacheManager.shared.retrieve(forKey: key)
