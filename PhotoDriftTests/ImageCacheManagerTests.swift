@@ -197,6 +197,44 @@ struct ImageCacheManagerTests {
         #expect(ShuffleEngine.gradientDirectory == ImageCacheManager.defaultCacheDirectory)
     }
 
+    // MARK: - Retiring the previous shuffle's files
+
+    private func url(_ name: String) -> URL {
+        URL(fileURLWithPath: "/tmp/PhotoDriftImages/\(name)")
+    }
+
+    @Test func nothingIsRetiredOnTheFirstShuffle() {
+        let current = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: nil)
+        #expect(ShuffleEngine.filesToRetire(previous: nil, replacedBy: current).isEmpty)
+    }
+
+    @Test func thePreviousRawFileIsRetiredOnceTheNextWallpaperIsLive() {
+        let previous = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: nil)
+        let current = ShuffleEngine.WallpaperFiles(raw: url("b.jpg"), gradient: nil)
+        #expect(ShuffleEngine.filesToRetire(previous: previous, replacedBy: current) == [url("a.jpg")])
+    }
+
+    @Test func thePreviousRawAndGradientAreBothRetired() {
+        let previous = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: url("gradient_a.jpg.png"))
+        let current = ShuffleEngine.WallpaperFiles(raw: url("b.jpg"), gradient: url("gradient_b.jpg.png"))
+        let retired = Set(ShuffleEngine.filesToRetire(previous: previous, replacedBy: current))
+        #expect(retired == [url("a.jpg"), url("gradient_a.jpg.png")])
+    }
+
+    @Test func theLiveFilesAreNeverRetiredWhenTheSameAssetRepeats() {
+        // A one-photo pool picks the same asset every time; the file on screen must survive.
+        let files = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: url("gradient_a.jpg.png"))
+        #expect(ShuffleEngine.filesToRetire(previous: files, replacedBy: files).isEmpty)
+    }
+
+    @Test func onlyTheGradientIsRetiredWhenTheSameAssetIsReappliedWithoutOne() {
+        // Scaling switched away from fit-to-screen between two picks of the same asset:
+        // the raw file is now live, the old composite is not.
+        let previous = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: url("gradient_a.jpg.png"))
+        let current = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: nil)
+        #expect(ShuffleEngine.filesToRetire(previous: previous, replacedBy: current) == [url("gradient_a.jpg.png")])
+    }
+
     // MARK: - Migration off the purgeable cache location
 
     private func makeMigrationPair() -> (legacy: URL, current: URL) {
