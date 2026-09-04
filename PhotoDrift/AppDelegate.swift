@@ -1,6 +1,7 @@
 import AppKit
 import SwiftData
 import Photos
+import Sparkle
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -9,6 +10,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var modelContainer: ModelContainer!
     private var settingsWC: SettingsWindowController?
     private var lightroomSignedIn = false
+
+    /// Sparkle's stock updater: daily background checks against `SUFeedURL`, its own
+    /// dialogs for "update available" and "Install and Relaunch". Started here rather than
+    /// in `applicationDidFinishLaunching` so it exists before the first menu is built.
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     static func main() {
         let app = NSApplication.shared
@@ -193,6 +203,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        // 9b. Check for Updates — Sparkle enables and disables this itself while a check runs.
+        let updateItem = NSMenuItem(
+            title: "Check for Updates...",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updateItem.target = updaterController
+        menu.addItem(updateItem)
 
         #if DEBUG
         menu.addItem(.separator())
