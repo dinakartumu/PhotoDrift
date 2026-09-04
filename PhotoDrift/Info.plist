@@ -4,6 +4,17 @@
 <dict>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>PhotoDrift needs to control System Events to set your wallpaper across all desktops.</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/dinakartumu/PhotoDrift/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>bn6YK9p477j9Z2lnZ/MvqW7ivcSEy9AyTXKWq0CmozI=</string>
+	<!-- Required in the sandbox: lets Sparkle install outside the app's container. -->
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<!-- A windowless agent has nowhere sensible to show Sparkle's "may we check?" prompt,
+	     so checks are on by default. Installs still ask: SUAutomaticallyUpdate stays off. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
