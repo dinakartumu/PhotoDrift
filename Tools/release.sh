@@ -28,6 +28,14 @@ ARCHIVE="$BUILD_DIR/PhotoDrift.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
 APP="$EXPORT_DIR/PhotoDrift.app"
 STAGE="$BUILD_DIR/dmg"
+# Where xcodebuild clones Swift packages for this run; Sparkle's appcast tooling ships
+# inside its package artifact, so resolving here makes the tools a build product.
+PACKAGES="$BUILD_DIR/packages"
+GENERATE_APPCAST="$PACKAGES/artifacts/sparkle/Sparkle/bin/generate_appcast"
+APPCAST="appcast.xml"
+DOWNLOAD_BASE="https://github.com/dinakartumu/PhotoDrift/releases/download"
+PRODUCT_PAGE="https://dinakartumu.com/photodrift"
+RELEASES_PAGE="https://github.com/dinakartumu/PhotoDrift/releases"
 
 SKIP_NOTARIZE=0
 [[ "${1:-}" == "--skip-notarize" ]] && SKIP_NOTARIZE=1
@@ -46,8 +54,10 @@ xcodebuild archive \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE" \
+  -clonedSourcePackagesDirPath "$PACKAGES" \
   | grep -E '^\*\*|error:' || true
 [[ -d "$ARCHIVE" ]] || fail "archive not produced"
+[[ -x "$GENERATE_APPCAST" ]] || fail "Sparkle tools not found at $GENERATE_APPCAST"
 
 step "Exporting with Developer ID"
 xcodebuild -exportArchive \
@@ -112,5 +122,24 @@ xcrun stapler validate "$DMG" || fail "staple validation failed"
 step "Verifying Gatekeeper acceptance"
 spctl -a -t open --context context:primary-signature -v "$DMG"
 
+# The EdDSA signature must cover the final bytes, so this runs after stapling. The
+# existing appcast is copied alongside the DMG so generate_appcast merges rather than
+# starts over; entries for archives that are no longer on disk are preserved as-is.
+step "Updating $APPCAST"
+APPCAST_DIR="$BUILD_DIR/appcast"
+mkdir -p "$APPCAST_DIR"
+cp "$DMG" "$APPCAST_DIR/"
+[[ -f "$APPCAST" ]] && cp "$APPCAST" "$APPCAST_DIR/$APPCAST"
+"$GENERATE_APPCAST" \
+  --download-url-prefix "$DOWNLOAD_BASE/v$VERSION/" \
+  --link "$PRODUCT_PAGE" \
+  --full-release-notes-url "$RELEASES_PAGE" \
+  --maximum-versions 5 \
+  -o "$APPCAST" \
+  "$APPCAST_DIR"
+grep -q "PhotoDrift-$VERSION.dmg" "$APPCAST" || fail "$APPCAST does not list PhotoDrift-$VERSION.dmg"
+
 printf '\n\033[32mDone: %s\033[0m\n' "$DMG"
 printf 'Notarized and stapled. This will launch on a Mac that has never seen it before.\n'
+printf 'Next: upload the DMG to the v%s GitHub release, then commit and push %s so\n' "$VERSION" "$APPCAST"
+printf 'installed copies see the update.\n'

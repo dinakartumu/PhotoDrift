@@ -12,6 +12,7 @@ A macOS menu bar app that automatically shuffles your desktop wallpaper using ph
 - **Multi-album support** -- select multiple albums from both sources to build a combined pool
 - **Smart caching** -- images are cached locally and prefetched in the background
 - **Offline fallback** -- falls back to Photos library when network is unavailable
+- **Automatic updates** -- checks GitHub once a day and offers new versions in place via Sparkle
 
 ## Requirements
 
@@ -23,6 +24,8 @@ A macOS menu bar app that automatically shuffles your desktop wallpaper using ph
 Download the latest notarized build from [Releases](https://github.com/dinakartumu/PhotoDrift/releases), drag `PhotoDrift.app` to `/Applications`, and launch it. The icon appears in your menu bar.
 
 On first launch PhotoDrift asks for Photos access. Lightroom is optional and configured in Settings.
+
+From 1.2 on, PhotoDrift checks for updates once a day and offers to install them; "Check for Updates..." in the menu does it on demand. The check fetches [`appcast.xml`](appcast.xml) from this repository and downloads the DMG from Releases. No system profile or identifier is sent. Updates are signed with an EdDSA key in addition to the Developer ID signature, so a tampered DMG is refused.
 
 ## Building
 
@@ -38,7 +41,7 @@ Then build and run (Cmd+R). To run the tests:
 xcodebuild test -project PhotoDrift.xcodeproj -scheme PhotoDrift -destination 'platform=macOS'
 ```
 
-To package a signed, notarized release, see [`Tools/release.sh`](Tools/release.sh).
+To package a signed, notarized release, see [`Tools/release.sh`](Tools/release.sh). It also regenerates `appcast.xml`; signing the entry needs the Sparkle EdDSA private key in your login Keychain (`generate_keys` from the Sparkle package prints the matching public key, which must equal `SUPublicEDKey` in `Info.plist`).
 
 ## Lightroom Setup
 
@@ -61,6 +64,7 @@ Built with native AppKit (no SwiftUI) for a lightweight menu bar experience.
 - **PhotoKit** for Apple Photos access
 - **Adobe Lightroom API** for cloud photo access
 - **Combine** for reactive event handling
+- **Sparkle 2** for updates, the project's one package dependency
 
 Cached images live in Application Support rather than Caches: macOS reclaims disk space by purging sandboxed apps' container caches and terminates the owning app to do it, and these files back the wallpaper currently on screen.
 
