@@ -1,16 +1,24 @@
 import AppKit
 
 enum WallpaperService {
-    static var connectedDisplayIDs: Set<CGDirectDisplayID> {
-        Set(NSScreen.screens.compactMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value })
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 
-    static func canInitializeDisplay(_ displayID: CGDirectDisplayID) -> Bool {
-        guard let screen = NSScreen.screens.first(where: {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
-        }) else { return false }
-        guard let url = NSWorkspace.shared.desktopImageURL(for: screen) else { return true }
-        return ownsWallpaper(at: url) || (url.isFileURL && !FileManager.default.isReadableFile(atPath: url.path))
+    static var connectedDisplayIDs: Set<CGDirectDisplayID> {
+        Set(NSScreen.screens.compactMap { displayID(for: $0) })
+    }
+
+    static func canInitializeDisplay(_ id: CGDirectDisplayID) -> Bool {
+        guard let screen = NSScreen.screens.first(where: { displayID(for: $0) == id }) else { return false }
+        return canInitializeWallpaper(at: NSWorkspace.shared.desktopImageURL(for: screen))
+    }
+
+    nonisolated static func canInitializeWallpaper(at url: URL?) -> Bool {
+        // Sandbox denial is indistinguishable from absence in fileExists/isReadableFile.
+        // An unrelated URL belongs to the user, even when we cannot inspect its file.
+        guard let url else { return true }
+        return ownsWallpaper(at: url)
     }
 
     nonisolated static func ownsWallpaper(at url: URL) -> Bool {
@@ -107,7 +115,7 @@ enum WallpaperService {
         let options = desktopImageOptions(for: scaling)
         for screen in NSScreen.screens {
             if let displayIDs {
-                guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value,
+                guard let id = displayID(for: screen),
                       displayIDs.contains(id) else { continue }
             }
             var opts = options

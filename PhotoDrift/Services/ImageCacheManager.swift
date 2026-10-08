@@ -101,6 +101,12 @@ actor ImageCacheManager {
         return fileURL
     }
 
+    /// Read while isolated to the cache actor so eviction cannot remove a returned URL
+    /// before its caller opens it. A vanished file is simply a cache miss.
+    func data(forKey key: String) -> Data? {
+        try? Data(contentsOf: cacheDirectory.appendingPathComponent(key))
+    }
+
     func retrieve(forKey key: String) -> URL? {
         let fileURL = cacheDirectory.appendingPathComponent(key)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }

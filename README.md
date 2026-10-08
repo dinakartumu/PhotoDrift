@@ -78,7 +78,9 @@ on launch, wake, and Space changes, with cancellable retries over the next two s
 
 Recovery respects Pause and enabled album selections. With all-desktops disabled, display
 configuration changes preserve existing desktops and initialize only attached screens with a missing or PhotoDrift image;
-Space changes and delayed retries do not apply to other desktops. Cache upgrades copy downloads
+Space changes and delayed retries do not apply to other desktops. Existing custom and macOS
+default wallpapers on attached displays are preserved in this mode; Shuffle Now applies to the
+currently visible desktops. Cache upgrades copy downloads
 once from both older locations while preserving files that macOS may still reference.
 
 The app icon is generated rather than hand-drawn — see [`Tools/GenerateAppIcon.swift`](Tools/GenerateAppIcon.swift).

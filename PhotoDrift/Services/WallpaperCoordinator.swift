@@ -63,6 +63,7 @@ final class WallpaperCoordinator {
             onRefreshError?(nil)
             return warning
         } catch {
+            if !applyToAllDesktops { pendingApplication = nil }
             throw ApplicationError(underlying: error)
         }
     }
@@ -100,7 +101,8 @@ final class WallpaperCoordinator {
         refresh(requiresAllDesktops: true)
     }
 
-    func cancelRefresh() {
+    func cancelRefresh(discardPendingApplication: Bool = false) {
+        if discardPendingApplication { pendingApplication = nil }
         refreshTask?.cancel()
         refreshTask = nil
     }
@@ -141,7 +143,7 @@ final class WallpaperCoordinator {
             // Uses the existing local file; transition recovery never downloads, renders,
             // or invokes the synchronous all-desktops AppleScript.
             _ = try apply(store.url(for: current), current.scaling, false, displayIDs)
-            completePendingApplication()
+            if displayIDs == nil { completePendingApplication() }
             onRefreshError?(nil)
         } catch {
             onRefreshError?("Wallpaper refresh failed: \(error.localizedDescription)")

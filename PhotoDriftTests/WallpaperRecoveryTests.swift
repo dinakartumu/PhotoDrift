@@ -254,9 +254,17 @@ struct WallpaperRecoveryTests {
         _ = container // Keep the in-memory database alive through the operation.
         let key = ImageCacheManager.cacheKey(for: album.id)
         _ = try await h.cache.store(data: Data("photo".utf8), forKey: key)
+        @MainActor final class ObservedStatus { var sawFailure = false }
+        let observed = ObservedStatus()
+        let token = NotificationCenter.default.addObserver(forName: .shuffleEngineStateChanged, object: engine, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                if engine.statusMessage?.hasPrefix("Wallpaper refresh failed:") == true { observed.sawFailure = true }
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
         h.failuresRemaining = 1
         await engine.shuffleNow()
-        #expect(engine.statusMessage?.hasPrefix("Wallpaper refresh failed:") == true)
+        #expect(observed.sawFailure)
         await h.coordinator.refreshTask?.value
         #expect(engine.statusMessage == nil)
         #expect(engine.lastShuffleDate != nil)
@@ -315,6 +323,55 @@ struct WallpaperRecoveryTests {
         try container.mainContext.save()
         await engine.shuffleNow()
         #expect(engine.statusMessage == "No photos available")
+    }
+
+    @Test func overlappingShufflesDoNotConsumeTheSameDownloadTwice() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        _ = container
+        let key = ImageCacheManager.cacheKey(for: album.id)
+        _ = try await h.cache.store(data: Data("photo".utf8), forKey: key)
+        async let first: Void = engine.shuffleNow()
+        async let second: Void = engine.shuffleNow()
+        _ = await (first, second)
+        await h.coordinator.refreshTask?.value
+        #expect(h.automation.filter { $0 }.count == 1)
+        #expect(engine.statusMessage == nil)
+    }
+
+    @Test func failedSnapshotSavePreservesTheDownloadedPhoto() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        _ = container
+        let key = ImageCacheManager.cacheKey(for: album.id)
+        let data = Data("photo".utf8)
+        _ = try await h.cache.store(data: data, forKey: key)
+        let manifest = h.store.directory.appendingPathComponent("current.json")
+        try FileManager.default.removeItem(at: manifest)
+        try FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: false)
+        await engine.shuffleNow()
+        #expect(await h.cache.data(forKey: key) == data)
+        #expect(engine.lastShuffleDate == nil)
+        #expect(engine.statusMessage?.hasPrefix("Error:") == true)
+    }
+
+    @Test func failedCurrentDesktopPublishCannotCompleteOnAnUnrelatedLaterEvent() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        h.allDesktops = false
+        h.failuresRemaining = 1
+        var completions = 0
+        #expect(throws: WallpaperCoordinator.ApplicationError.self) {
+            try h.coordinator.publish(data: Data("new".utf8), isPNG: false, scaling: .center, applyToAllDesktops: false, onApplied: { completions += 1 })
+        }
+        h.displays.insert(2)
+        h.coordinator.screensChanged()
+        h.allDesktops = true
+        h.coordinator.restoreAfterLaunchOrWake()
+        await h.coordinator.refreshTask?.value
+        #expect(completions == 0)
     }
 
     @Test func pauseAndDeselectionDisableEnvironmentalRecovery() async throws {

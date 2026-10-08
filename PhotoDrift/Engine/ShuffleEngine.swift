@@ -21,6 +21,7 @@ final class ShuffleEngine {
         set { taskStatusMessage = newValue; wallpaperRefreshError = nil }
     }
     private var recoveryPaused = false
+    private var isShuffling = false
 
     private var timerCancellable: AnyCancellable?
     private var observerCancellable: AnyCancellable?
@@ -99,7 +100,7 @@ final class ShuffleEngine {
     func stop() {
         isRunning = false
         recoveryPaused = true
-        wallpaperCoordinator.cancelRefresh()
+        wallpaperCoordinator.cancelRefresh(discardPendingApplication: true)
         timerCancellable?.cancel()
         timerCancellable = nil
         nextShuffleDate = nil
@@ -168,6 +169,9 @@ final class ShuffleEngine {
 
     @MainActor
     private func performShuffle() async {
+        guard !isShuffling else { return }
+        isShuffling = true
+        defer { isShuffling = false }
         let context = ModelContext(modelContainer)
         let settings = AppSettings.current(in: context)
         let scaling = settings.wallpaperScaling
@@ -231,19 +235,27 @@ final class ShuffleEngine {
         do {
             // Check cache first
             let key = ImageCacheManager.cacheKey(for: pick.id)
-            if let cached = await imageCache.retrieve(forKey: key) {
-                let cachedData = try Data(contentsOf: cached)
-                // Downloads are disposable; consume them so edits under the same asset ID
-                // are fetched again. Published snapshots remain untouched.
-                await imageCache.remove(forKey: key)
-                let warning = try setWallpaper(
-                    imageData: cachedData,
-                    scaling: scaling,
-                    applyToAllDesktops: applyToAllDesktops,
-                    onApplied: { [weak self] in self?.recordApplied(pick) }
-                )
+            if let cachedData = await imageCache.data(forKey: key) {
+                let warning: WallpaperService.Warning?
+                do {
+                    warning = try setWallpaper(
+                        imageData: cachedData,
+                        scaling: scaling,
+                        applyToAllDesktops: applyToAllDesktops,
+                        onApplied: { [weak self] in self?.recordApplied(pick) }
+                    )
+                } catch let error as WallpaperCoordinator.ApplicationError {
+                    // Report before yielding: recovery may succeed during cache cleanup.
+                    statusMessage = nil
+                    wallpaperRefreshError = error.localizedDescription
+                    postStateChange()
+                    await imageCache.remove(forKey: key)
+                    return
+                }
                 statusMessage = wallpaperWarningMessage(from: warning)
                 postStateChange()
+                // Consume only after durable publication, so disk errors preserve downloads.
+                await imageCache.remove(forKey: key)
                 prefetchInBackground(pool: pool)
                 return
             }
@@ -344,7 +356,7 @@ final class ShuffleEngine {
     @MainActor
     func handleLightroomAuthStateChanged(signedIn: Bool) {
         guard signedIn, taskStatusMessage == "Lightroom: please sign in again" else { return }
-        statusMessage = nil
+        taskStatusMessage = nil
         postStateChange()
     }
 

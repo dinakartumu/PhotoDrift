@@ -71,6 +71,14 @@ struct WallpaperScalingOptionTests {
 }
 
 struct WallpaperImportTests {
+    @Test func unrelatedWallpaperIsPreservedEvenWhenSandboxCannotReadIt() {
+        #expect(WallpaperService.canInitializeWallpaper(at: nil))
+        #expect(WallpaperService.canInitializeWallpaper(at: WallpaperStore.defaultDirectory.appendingPathComponent("missing.jpg")))
+        #expect(!WallpaperService.canInitializeWallpaper(at: URL(fileURLWithPath: "/Users/another-user/Pictures/private.jpg")))
+        #expect(!WallpaperService.canInitializeWallpaper(at: URL(fileURLWithPath: "/System/Library/Desktop Pictures/default.heic")))
+        #expect(!WallpaperService.canInitializeWallpaper(at: URL(string: "wallpaper://custom")))
+    }
+
     @Test func recognizesOnlyOwnedWallpaperDirectories() {
         for directory in [ImageCacheManager.previousCacheDirectory, ImageCacheManager.legacyCacheDirectory, WallpaperStore.defaultDirectory] {
             #expect(WallpaperService.ownsWallpaper(at: directory.appendingPathComponent("wallpaper.jpg")))
