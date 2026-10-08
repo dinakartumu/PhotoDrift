@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 nonisolated enum GradientRenderer {
 
     /// Composites a gradient background with the photo drawn aspect-fit on top.
-    /// Returns PNG data sized to `screenSize` (in pixels).
+    /// Returns high-quality JPEG data sized to `screenSize` (in pixels).
     static func composite(imageData: Data, screenSize: CGSize) -> Data? {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
@@ -40,9 +40,9 @@ nonisolated enum GradientRenderer {
         ctx.interpolationQuality = .high
         ctx.draw(image, in: fitRect)
 
-        // 3. Export as PNG
+        // 3. Export as JPEG to keep retained desktop snapshots compact
         guard let composited = ctx.makeImage() else { return nil }
-        return pngData(from: composited)
+        return jpegData(from: composited)
     }
 
     // MARK: - Gradient drawing
@@ -83,12 +83,12 @@ nonisolated enum GradientRenderer {
         return fitRect.width < screenSize.width - 1 || fitRect.height < screenSize.height - 1
     }
 
-    // MARK: - PNG export
+    // MARK: - JPEG export
 
-    private static func pngData(from image: CGImage) -> Data? {
+    private static func jpegData(from image: CGImage) -> Data? {
         let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(dest, image, nil)
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.95] as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { return nil }
         return data as Data
     }

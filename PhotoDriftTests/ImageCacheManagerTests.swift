@@ -39,42 +39,6 @@ struct ImageCacheManagerTests {
         }
     }
 
-    // MARK: - Gradient filename derivation
-
-    @Test func gradientFilenamesAreUniquePerAssetID() {
-        let key1 = ImageCacheManager.cacheKey(for: "asset-001")
-        let key2 = ImageCacheManager.cacheKey(for: "asset-002")
-        let name1 = "gradient_\(key1).png"
-        let name2 = "gradient_\(key2).png"
-        #expect(name1 != name2)
-    }
-
-    @Test func gradientFilenameIsStableForSameAssetID() {
-        let key = ImageCacheManager.cacheKey(for: "asset-repeat")
-        let name1 = "gradient_\(key).png"
-        let name2 = "gradient_\(key).png"
-        #expect(name1 == name2)
-    }
-
-    @Test func gradientFilenameContainsNoProblemCharacters() {
-        // Asset IDs from Photos (e.g. "B84E8479-475C-4727-A4A4-B77AA9980897/L0/001")
-        // and Lightroom (e.g. "abc123def456") should produce safe filenames
-        let ids = [
-            "B84E8479-475C-4727-A4A4-B77AA9980897/L0/001",
-            "abc123def456",
-            "asset with spaces",
-            "特殊文字",
-        ]
-        let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_."))
-        for id in ids {
-            let key = ImageCacheManager.cacheKey(for: id)
-            let name = "gradient_\(key).png"
-            for scalar in name.unicodeScalars {
-                #expect(safeChars.contains(scalar), "Unsafe character '\(scalar)' in gradient filename for id: \(id)")
-            }
-        }
-    }
-
     // MARK: - Store / Retrieve
 
     @Test func storeAndRetrieveRoundtrip() async throws {
@@ -149,90 +113,17 @@ struct ImageCacheManagerTests {
         #expect(path.contains("/Library/Caches/"))
     }
 
-    // MARK: - Which keys survive cache cleanup
-
-    @Test func retainedKeysCoverEveryPooledAsset() {
-        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: ["a", "b"], liveWallpaperURL: nil)
-        #expect(keys == [ImageCacheManager.cacheKey(for: "a"), ImageCacheManager.cacheKey(for: "b")])
+    @Test func disposableDownloadsDoNotReusePreviouslyPublishedDirectory() {
+        #expect(ImageCacheManager.defaultCacheDirectory.lastPathComponent == "PhotoDriftDownloads")
+        #expect(ImageCacheManager.defaultCacheDirectory != WallpaperStore.defaultDirectory)
     }
 
-    @Test func retainedKeysIncludeTheLiveWallpaperFile() {
-        // Gradients are regenerated each shuffle, but the one macOS is currently displaying
-        // is referenced by path and reapplied on space change — deleting it breaks reapply.
-        let live = URL(fileURLWithPath: "/tmp/PhotoDriftImages/gradient_abc.jpg.png")
-        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: ["a"], liveWallpaperURL: live)
-        #expect(keys.contains("gradient_abc.jpg.png"))
-        #expect(keys.contains(ImageCacheManager.cacheKey(for: "a")))
-    }
-
-    @Test func retainedKeysAreJustTheLiveWallpaperWhenPoolIsEmpty() {
-        let live = URL(fileURLWithPath: "/tmp/PhotoDriftImages/gradient_solo.jpg.png")
-        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: [], liveWallpaperURL: live)
-        #expect(keys == ["gradient_solo.jpg.png"])
-    }
-
-    @Test func retainedKeysAreEmptyWithNoPoolAndNoLiveWallpaper() {
-        #expect(ShuffleEngine.retainedCacheKeys(forAssetIDs: [], liveWallpaperURL: nil).isEmpty)
-    }
-
-    @Test func aStaleGradientIsNotRetained() async throws {
-        // The previous shuffle's gradient must be collectable once it is no longer live.
-        let (manager, dir) = makeTempCache()
+    @Test func newlyStoredFileSurvivesEvenWhenItExceedsCacheBudget() async throws {
+        let (manager, dir) = makeTempCache(maxBytes: 10)
         defer { cleanup(dir) }
-
-        _ = try await manager.store(data: Data("old".utf8), forKey: "gradient_old.jpg.png")
-        _ = try await manager.store(data: Data("live".utf8), forKey: "gradient_live.jpg.png")
-
-        let live = dir.appendingPathComponent("gradient_live.jpg.png")
-        let keys = ShuffleEngine.retainedCacheKeys(forAssetIDs: [], liveWallpaperURL: live)
-        await manager.removeStaleEntries(validKeys: keys)
-
-        #expect(await manager.retrieve(forKey: "gradient_old.jpg.png") == nil)
-        #expect(await manager.retrieve(forKey: "gradient_live.jpg.png") != nil)
-    }
-
-    @Test func gradientDirectoryIsTheSameNonPurgeableDirectoryAsTheImageCache() {
-        // Composited gradients are handed straight to WallpaperService as the live
-        // wallpaper file — they must not sit anywhere the system can purge.
-        #expect(ShuffleEngine.gradientDirectory == ImageCacheManager.defaultCacheDirectory)
-    }
-
-    // MARK: - Retiring the previous shuffle's files
-
-    private func url(_ name: String) -> URL {
-        URL(fileURLWithPath: "/tmp/PhotoDriftImages/\(name)")
-    }
-
-    @Test func nothingIsRetiredOnTheFirstShuffle() {
-        let current = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: nil)
-        #expect(ShuffleEngine.filesToRetire(previous: nil, replacedBy: current).isEmpty)
-    }
-
-    @Test func thePreviousRawFileIsRetiredOnceTheNextWallpaperIsLive() {
-        let previous = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: nil)
-        let current = ShuffleEngine.WallpaperFiles(raw: url("b.jpg"), gradient: nil)
-        #expect(ShuffleEngine.filesToRetire(previous: previous, replacedBy: current) == [url("a.jpg")])
-    }
-
-    @Test func thePreviousRawAndGradientAreBothRetired() {
-        let previous = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: url("gradient_a.jpg.png"))
-        let current = ShuffleEngine.WallpaperFiles(raw: url("b.jpg"), gradient: url("gradient_b.jpg.png"))
-        let retired = Set(ShuffleEngine.filesToRetire(previous: previous, replacedBy: current))
-        #expect(retired == [url("a.jpg"), url("gradient_a.jpg.png")])
-    }
-
-    @Test func theLiveFilesAreNeverRetiredWhenTheSameAssetRepeats() {
-        // A one-photo pool picks the same asset every time; the file on screen must survive.
-        let files = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: url("gradient_a.jpg.png"))
-        #expect(ShuffleEngine.filesToRetire(previous: files, replacedBy: files).isEmpty)
-    }
-
-    @Test func onlyTheGradientIsRetiredWhenTheSameAssetIsReappliedWithoutOne() {
-        // Scaling switched away from fit-to-screen between two picks of the same asset:
-        // the raw file is now live, the old composite is not.
-        let previous = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: url("gradient_a.jpg.png"))
-        let current = ShuffleEngine.WallpaperFiles(raw: url("a.jpg"), gradient: nil)
-        #expect(ShuffleEngine.filesToRetire(previous: previous, replacedBy: current) == [url("gradient_a.jpg.png")])
+        let data = Data(repeating: 0x41, count: 60)
+        let url = try await manager.store(data: data, forKey: "large.jpg")
+        #expect(try Data(contentsOf: url) == data)
     }
 
     // MARK: - Migration off the purgeable cache location
@@ -251,7 +142,7 @@ struct ImageCacheManagerTests {
         try Data(contents.utf8).write(to: dir.appendingPathComponent(name))
     }
 
-    @Test func migrationMovesLegacyFilesIntoTheNewDirectory() throws {
+    @Test func migrationCopiesLegacyFilesIntoTheNewDirectory() throws {
         let (legacy, current) = makeMigrationPair()
         defer { cleanup(legacy.deletingLastPathComponent()) }
 
@@ -265,7 +156,7 @@ struct ImageCacheManagerTests {
         #expect(try String(contentsOf: moved, encoding: .utf8) == "cached image")
     }
 
-    @Test func migrationRemovesTheLegacyDirectory() throws {
+    @Test func migrationPreservesFilesReferencedByOlderDesktops() throws {
         let (legacy, current) = makeMigrationPair()
         defer { cleanup(legacy.deletingLastPathComponent()) }
 
@@ -274,7 +165,7 @@ struct ImageCacheManagerTests {
 
         ImageCacheManager.migrateIfNeeded(from: legacy, to: current)
 
-        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+        #expect(try String(contentsOf: legacy.appendingPathComponent("a.jpg"), encoding: .utf8) == "x")
     }
 
     @Test func migrationKeepsExistingFileWhenBothLocationsHaveTheSameKey() throws {
@@ -288,7 +179,7 @@ struct ImageCacheManagerTests {
 
         let kept = current.appendingPathComponent("a.jpg")
         #expect(try String(contentsOf: kept, encoding: .utf8) == "fresh")
-        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+        #expect(try String(contentsOf: legacy.appendingPathComponent("a.jpg"), encoding: .utf8) == "stale")
     }
 
     @Test func migrationIsANoOpWhenLegacyDirectoryIsAbsent() throws {
@@ -334,5 +225,34 @@ struct ImageCacheManagerTests {
         let secondExists = await manager.retrieve(forKey: "second.jpg")
         #expect(firstExists == nil)
         #expect(secondExists != nil)
+    }
+}
+
+struct DownloadCacheUpgradeTests {
+    @Test func upgradeImportsBothCacheGenerationsOnlyOnceAndPreservesOriginals() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DownloadUpgrade-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support/PhotoDriftImages")
+        let legacy = root.appendingPathComponent("Caches/PhotoDriftImages")
+        let downloads = root.appendingPathComponent("Application Support/PhotoDriftDownloads")
+        for directory in [support, legacy, downloads] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try Data("v1.3".utf8).write(to: support.appendingPathComponent("shared.jpg"))
+        try Data("older".utf8).write(to: legacy.appendingPathComponent("shared.jpg"))
+        try Data("offline photo".utf8).write(to: legacy.appendingPathComponent("legacy.jpg"))
+        try Data("desktop".utf8).write(to: support.appendingPathComponent("gradient.png"))
+        ImageCacheManager.migratePreviousDownloads(to: downloads, previousDirectory: support, legacyDirectory: legacy)
+        let cache = ImageCacheManager(cacheDirectory: downloads)
+        let restored = try #require(await cache.retrieve(forKey: "shared.jpg"))
+        #expect(try String(contentsOf: restored, encoding: .utf8) == "v1.3")
+        #expect(await cache.retrieve(forKey: "legacy.jpg") != nil)
+        #expect(await cache.retrieve(forKey: "gradient.png") == nil)
+        try await cache.clear()
+        ImageCacheManager.migratePreviousDownloads(to: downloads, previousDirectory: support, legacyDirectory: legacy)
+        #expect(await cache.retrieve(forKey: "shared.jpg") == nil)
+        #expect(await cache.retrieve(forKey: "legacy.jpg") == nil)
+        #expect(try String(contentsOf: support.appendingPathComponent("shared.jpg"), encoding: .utf8) == "v1.3")
+        #expect(try String(contentsOf: legacy.appendingPathComponent("shared.jpg"), encoding: .utf8) == "older")
     }
 }

@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var modelContainer: ModelContainer!
     private var settingsWC: SettingsWindowController?
     private var lightroomSignedIn = false
+    private var wallpaperEnvironmentObserver: WallpaperEnvironmentObserver?
 
     /// Sparkle's stock updater: daily background checks against `SUFeedURL`, its own
     /// dialogs for "update available" and "Install and Relaunch". Created in
@@ -68,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hosted unit tests must not open the user's library or change their wallpaper.
+        guard NSClassFromString("XCTestCase") == nil else { return }
         WallpaperTargetPreferences.registerDefaults()
 
         let schema = Schema([Album.self, Asset.self, AppSettings.self])
@@ -86,7 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         loadSavedTokens()
         observeWake()
-        observeActiveSpaceChanges()
+        wallpaperEnvironmentObserver = WallpaperEnvironmentObserver(coordinator: shuffleEngine.wallpaperCoordinator)
+        shuffleEngine.wallpaperCoordinator.restoreAfterLaunchOrWake()
         setupStatusItem()
 
         NotificationCenter.default.addObserver(
@@ -102,6 +106,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name: .lightroomAuthStateChanged,
             object: nil
         )
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        wallpaperEnvironmentObserver?.stop()
+        shuffleEngine?.wallpaperCoordinator.cancelRefresh()
     }
 
     // MARK: - OAuth Callback
@@ -562,10 +571,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
                 else { return }
 
-                let url = try await ImageCacheManager.shared.store(data: jpegData, forKey: "test_wallpaper.jpg")
                 let context = ModelContext(modelContainer)
-                let scaling = AppSettings.current(in: context).wallpaperScaling
-                try WallpaperService.setWallpaper(from: url, scaling: scaling)
+                let settings = AppSettings.current(in: context)
+                try shuffleEngine.wallpaperCoordinator.publish(
+                    data: jpegData, isPNG: false, scaling: settings.wallpaperScaling,
+                    applyToAllDesktops: settings.applyToAllDesktops
+                )
             } catch {
                 // Debug only
             }
@@ -663,18 +674,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // compiler cannot see here is real at runtime.
             MainActor.assumeIsolated {
                 self?.shuffleEngine.handleWake()
-            }
-        }
-    }
-
-    private func observeActiveSpaceChanges() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.activeSpaceDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.shuffleEngine.handleActiveSpaceChanged()
             }
         }
     }

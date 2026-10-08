@@ -69,3 +69,29 @@ struct WallpaperScalingOptionTests {
         #expect(source.contains(#"set picture of desk to POSIX file "/Users/test/Pictures/wallpaper 1.jpg""#))
     }
 }
+
+struct WallpaperImportTests {
+    @Test func unrelatedWallpaperIsPreservedEvenWhenSandboxCannotReadIt() {
+        #expect(WallpaperService.canInitializeWallpaper(at: nil))
+        #expect(WallpaperService.canInitializeWallpaper(at: WallpaperStore.defaultDirectory.appendingPathComponent("missing.jpg")))
+        #expect(!WallpaperService.canInitializeWallpaper(at: URL(fileURLWithPath: "/Users/another-user/Pictures/private.jpg")))
+        #expect(!WallpaperService.canInitializeWallpaper(at: URL(fileURLWithPath: "/System/Library/Desktop Pictures/default.heic")))
+        #expect(!WallpaperService.canInitializeWallpaper(at: URL(string: "wallpaper://custom")))
+    }
+
+    @Test func recognizesOnlyOwnedWallpaperDirectories() {
+        for directory in [ImageCacheManager.previousCacheDirectory, ImageCacheManager.legacyCacheDirectory, WallpaperStore.defaultDirectory] {
+            #expect(WallpaperService.ownsWallpaper(at: directory.appendingPathComponent("wallpaper.jpg")))
+        }
+        #expect(!WallpaperService.ownsWallpaper(at: URL(fileURLWithPath: "/Users/example/Pictures/custom.jpg")))
+        #expect(!WallpaperService.ownsWallpaper(at: WallpaperStore.defaultDirectory.appendingPathComponent("../unrelated.jpg")))
+        #expect(!WallpaperService.ownsWallpaper(at: ImageCacheManager.defaultCacheDirectory.appendingPathComponent("download.jpg")))
+    }
+
+    @Test func restoresScalingFromSystemOptions() {
+        for scaling in [WallpaperScaling.fillScreen, .fitToScreen, .stretchToFill, .center] {
+            #expect(WallpaperService.scaling(from: WallpaperService.desktopImageOptions(for: scaling)) == scaling)
+        }
+        #expect(WallpaperService.scaling(from: [:]) == .fitToScreen)
+    }
+}
