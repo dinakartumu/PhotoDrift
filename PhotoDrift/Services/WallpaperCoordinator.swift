@@ -3,23 +3,32 @@ import AppKit
 /// Owns the last published wallpaper and recovery after WindowServer transitions.
 @MainActor
 final class WallpaperCoordinator {
-    typealias Apply = (URL, WallpaperScaling, Bool) throws -> WallpaperService.Warning?
+    typealias Apply = (URL, WallpaperScaling, Bool, Set<CGDirectDisplayID>?) throws -> WallpaperService.Warning?
     typealias Sleep = (Duration) async throws -> Void
 
     private let store: WallpaperStore
     private let apply: Apply
     private let sleep: Sleep
     private let appliesToAllDesktops: () -> Bool
+    private let displayIDs: () -> Set<CGDirectDisplayID>
+    private var knownDisplayIDs: Set<CGDirectDisplayID>
+    var shouldRecover: () -> Bool = { true }
     private let legacyWallpaper: () -> (data: Data, isPNG: Bool, scaling: WallpaperScaling)?
     private var current: WallpaperStore.Wallpaper?
     private(set) var refreshTask: Task<Void, Never>?
     var onRefreshError: ((String?) -> Void)?
 
+    struct ApplicationError: LocalizedError {
+        let underlying: Error
+        var errorDescription: String? { "Wallpaper refresh failed: \(underlying.localizedDescription)" }
+    }
+
     init(
         store: WallpaperStore = WallpaperStore(),
         appliesToAllDesktops: @escaping () -> Bool = { WallpaperTargetPreferences.applyToAllDesktops },
         legacyWallpaper: @escaping () -> (data: Data, isPNG: Bool, scaling: WallpaperScaling)? = { WallpaperService.existingPhotoDriftWallpaper() },
-        apply: @escaping Apply = { try WallpaperService.setWallpaper(from: $0, scaling: $1, applyToAllDesktops: $2) },
+        displayIDs: @escaping () -> Set<CGDirectDisplayID> = { WallpaperService.connectedDisplayIDs },
+        apply: @escaping Apply = { try WallpaperService.setWallpaper(from: $0, scaling: $1, applyToAllDesktops: $2, displayIDs: $3) },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
         self.store = store
@@ -27,6 +36,8 @@ final class WallpaperCoordinator {
         self.legacyWallpaper = legacyWallpaper
         self.apply = apply
         self.sleep = sleep
+        self.displayIDs = displayIDs
+        knownDisplayIDs = displayIDs()
         current = store.restore()
     }
 
@@ -38,8 +49,16 @@ final class WallpaperCoordinator {
         cancelRefresh()
         guard let current else { return nil }
         // Even a successful API call can precede the end of a Mission Control transition.
-        defer { scheduleRetries(requiresAllDesktops: false) }
-        return try apply(store.url(for: current), current.scaling, applyToAllDesktops)
+        // A delayed call cannot be bound to a Space with public APIs. In current-desktop
+        // mode, apply once so a fast Space switch can never receive a stale retry.
+        defer { if applyToAllDesktops { scheduleRetries(requiresAllDesktops: true) } }
+        do {
+            let warning = try apply(store.url(for: current), current.scaling, applyToAllDesktops, nil)
+            onRefreshError?(nil)
+            return warning
+        } catch {
+            throw ApplicationError(underlying: error)
+        }
     }
 
     func activeSpaceChanged() {
@@ -47,11 +66,21 @@ final class WallpaperCoordinator {
     }
 
     func screensChanged() {
-        // A newly attached display needs the current image even in current-desktop mode.
-        refresh(requiresAllDesktops: false)
+        let connected = displayIDs()
+        let added = connected.subtracting(knownDisplayIDs)
+        knownDisplayIDs = connected
+        if appliesToAllDesktops() {
+            refresh(requiresAllDesktops: true)
+        } else {
+            cancelRefresh()
+            guard shouldRecover(), !added.isEmpty else { return }
+            // Preserve every existing screen's current Space, including unrelated images.
+            reapplyCurrent(displayIDs: added)
+        }
     }
 
     func restoreAfterLaunchOrWake() {
+        guard shouldRecover() else { cancelRefresh(); return }
         // Upgrade from versions that kept the current URL only in memory. Import a
         // readable PhotoDrift desktop image before album synchronization can delay us.
         if current == nil, let legacy = legacyWallpaper() {
@@ -71,7 +100,7 @@ final class WallpaperCoordinator {
 
     private func refresh(requiresAllDesktops: Bool) {
         cancelRefresh()
-        guard current != nil, !requiresAllDesktops || appliesToAllDesktops() else { return }
+        guard shouldRecover(), current != nil, !requiresAllDesktops || appliesToAllDesktops() else { return }
         reapplyCurrent()
         scheduleRetries(requiresAllDesktops: requiresAllDesktops)
     }
@@ -87,18 +116,18 @@ final class WallpaperCoordinator {
                     try await sleep(delay)
                     try Task.checkCancellation()
                 } catch { return }
-                guard let self, !requiresAllDesktops || self.appliesToAllDesktops() else { return }
+                guard let self, self.shouldRecover(), !requiresAllDesktops || self.appliesToAllDesktops() else { return }
                 self.reapplyCurrent()
             }
         }
     }
 
-    private func reapplyCurrent() {
+    private func reapplyCurrent(displayIDs: Set<CGDirectDisplayID>? = nil) {
         guard let current else { return }
         do {
             // Uses the existing local file; transition recovery never downloads, renders,
             // or invokes the synchronous all-desktops AppleScript.
-            _ = try apply(store.url(for: current), current.scaling, false)
+            _ = try apply(store.url(for: current), current.scaling, false, displayIDs)
             onRefreshError?(nil)
         } catch {
             onRefreshError?("Wallpaper refresh failed: \(error.localizedDescription)")

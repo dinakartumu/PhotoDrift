@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+import SwiftData
 @testable import PhotoDrift
 
 struct WallpaperStoreTests {
@@ -61,7 +62,10 @@ struct WallpaperRecoveryTests {
         var automation: [Bool] = []
         var delays: [Duration] = []
         var allDesktops = true
+        var displays: Set<CGDirectDisplayID> = [1]
+        var targets: [Set<CGDirectDisplayID>?] = []
         var failuresRemaining = 0
+        var warning: WallpaperService.Warning?
         var errors: [String?] = []
 
         init() throws {
@@ -71,14 +75,16 @@ struct WallpaperRecoveryTests {
             coordinator = WallpaperCoordinator(
                 store: store,
                 appliesToAllDesktops: { [unowned self] in self.allDesktops },
-                apply: { [unowned self] url, _, automate in
+                displayIDs: { [unowned self] in self.displays },
+                apply: { [unowned self] url, _, automate, targets in
+                    self.targets.append(targets)
                     self.urls.append(url)
                     self.automation.append(automate)
                     if self.failuresRemaining > 0 {
                         self.failuresRemaining -= 1
                         throw CocoaError(.fileReadUnknown)
                     }
-                    return nil
+                    return self.warning
                 },
                 sleep: { [unowned self] delay in self.delays.append(delay) }
             )
@@ -158,7 +164,7 @@ struct WallpaperRecoveryTests {
         let coordinator = WallpaperCoordinator(
             store: store, appliesToAllDesktops: { true },
             legacyWallpaper: { (data, true, .fillScreen) },
-            apply: { url, _, _ in applied.append(url); return nil },
+            apply: { url, _, _, _ in applied.append(url); return nil },
             sleep: { _ in }
         )
         defer { coordinator.cancelRefresh() }
@@ -174,7 +180,7 @@ struct WallpaperRecoveryTests {
         let h = try Harness()
         defer { h.cleanup() }
         h.failuresRemaining = 1
-        #expect(throws: CocoaError.self) {
+        #expect(throws: WallpaperCoordinator.ApplicationError.self) {
             try h.coordinator.publish(data: Data("new".utf8), isPNG: false, scaling: .center, applyToAllDesktops: true)
         }
         let saved = try #require(h.store.restore())
@@ -195,9 +201,13 @@ struct WallpaperRecoveryTests {
         #expect(h.urls.count == 1)
         h.coordinator.restoreAfterLaunchOrWake()
         #expect(h.urls.count == 1)
+        h.coordinator.screensChanged() // Resolution/arrangement changes preserve Space B.
+        #expect(h.urls.count == 1)
+        h.displays.insert(2)
         h.coordinator.screensChanged()
         await h.coordinator.refreshTask?.value
-        #expect(h.urls.count == 5) // Monitor attachment still gets the current wallpaper.
+        #expect(h.urls.count == 2)
+        #expect(h.targets.last! == Set([2])) // Only the attached monitor, never Space B.
     }
 
     @Test func disablingAllDesktopsStopsPendingSpaceRetries() async throws {
@@ -205,6 +215,74 @@ struct WallpaperRecoveryTests {
         defer { h.cleanup() }
         h.coordinator.activeSpaceChanged()
         h.allDesktops = false
+        await h.coordinator.refreshTask?.value
+        #expect(h.urls.count == 1)
+    }
+
+    private func makeEngine(_ h: Harness) throws -> (ShuffleEngine, ModelContainer, Album) {
+        WallpaperTargetPreferences.registerDefaults()
+        let container = try makeTestContainer()
+        let context = container.mainContext
+        let album = Album(id: UUID().uuidString, name: "Test", sourceType: .lightroomCloud, isSelected: true)
+        context.insert(album)
+        context.insert(AppSettings(photosEnabled: false, lightroomEnabled: true, wallpaperScaling: .center))
+        context.insert(Asset(id: album.id, sourceType: .lightroomCloud, album: album))
+        try context.save()
+        return (ShuffleEngine(modelContainer: container, wallpaperCoordinator: h.coordinator), container, album)
+    }
+
+    @Test func initialPublicationErrorClearsAfterRecoveryInEngine() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        _ = container // Keep the in-memory database alive through the operation.
+        let key = ImageCacheManager.cacheKey(for: album.id)
+        _ = try await ImageCacheManager.shared.store(data: Data("photo".utf8), forKey: key)
+        h.failuresRemaining = 1
+        await engine.shuffleNow()
+        #expect(engine.statusMessage?.hasPrefix("Wallpaper refresh failed:") == true)
+        await h.coordinator.refreshTask?.value
+        #expect(engine.statusMessage == nil)
+        await ImageCacheManager.shared.remove(forKey: key)
+    }
+
+    @Test func transientRefreshErrorDoesNotEraseAutomationWarning() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        _ = container
+        let key = ImageCacheManager.cacheKey(for: album.id)
+        _ = try await ImageCacheManager.shared.store(data: Data("photo".utf8), forKey: key)
+        h.warning = .allDesktopsPermissionDenied
+        await engine.shuffleNow()
+        let warning = try #require(engine.statusMessage)
+        h.failuresRemaining = 1
+        h.coordinator.activeSpaceChanged()
+        #expect(engine.statusMessage != warning)
+        await h.coordinator.refreshTask?.value
+        #expect(engine.statusMessage == warning)
+        await ImageCacheManager.shared.remove(forKey: key)
+    }
+
+    @Test func pauseAndDeselectionDisableEnvironmentalRecovery() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        h.coordinator.activeSpaceChanged()
+        #expect(h.urls.count == 1)
+        album.isSelected = false
+        try container.mainContext.save()
+        h.coordinator.restoreAfterLaunchOrWake()
+        h.coordinator.screensChanged()
+        await h.coordinator.refreshTask?.value
+        #expect(h.urls.count == 1)
+        album.isSelected = true
+        try container.mainContext.save()
+        engine.stop()
+        h.coordinator.activeSpaceChanged()
+        h.coordinator.restoreAfterLaunchOrWake()
+        h.displays.insert(2)
+        h.coordinator.screensChanged()
         await h.coordinator.refreshTask?.value
         #expect(h.urls.count == 1)
     }

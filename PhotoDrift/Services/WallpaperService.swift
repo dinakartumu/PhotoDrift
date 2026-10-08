@@ -1,27 +1,32 @@
 import AppKit
 
 enum WallpaperService {
+    static var connectedDisplayIDs: Set<CGDirectDisplayID> {
+        Set(NSScreen.screens.compactMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value })
+    }
+
+    nonisolated static func ownsWallpaper(at url: URL) -> Bool {
+        [ImageCacheManager.previousCacheDirectory, ImageCacheManager.legacyCacheDirectory, WallpaperStore.defaultDirectory]
+            .contains { $0.standardizedFileURL == url.deletingLastPathComponent().standardizedFileURL }
+    }
+
+    nonisolated static func scaling(from options: [NSWorkspace.DesktopImageOptionKey: Any]) -> WallpaperScaling {
+        switch (options[.imageScaling] as? NSNumber)?.uintValue {
+        case NSImageScaling.scaleAxesIndependently.rawValue: .stretchToFill
+        case NSImageScaling.scaleNone.rawValue: .center
+        default: (options[.allowClipping] as? Bool) == true ? .fillScreen : .fitToScreen
+        }
+    }
+
     /// Only import this app's own images; never adopt a user's unrelated desktop image.
     static func existingPhotoDriftWallpaper() -> (data: Data, isPNG: Bool, scaling: WallpaperScaling)? {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directories = [
-            support.appendingPathComponent("PhotoDriftImages", isDirectory: true),
-            ImageCacheManager.legacyCacheDirectory,
-            WallpaperStore.defaultDirectory,
-        ].map { $0.standardizedFileURL }
         for screen in NSScreen.screens {
             guard let url = NSWorkspace.shared.desktopImageURL(for: screen),
-                  directories.contains(url.deletingLastPathComponent().standardizedFileURL),
+                  ownsWallpaper(at: url),
                   let data = try? Data(contentsOf: url)
             else { continue }
             let options = NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:]
-            let scaling: WallpaperScaling
-            switch (options[.imageScaling] as? NSNumber)?.uintValue {
-            case NSImageScaling.scaleAxesIndependently.rawValue: scaling = .stretchToFill
-            case NSImageScaling.scaleNone.rawValue: scaling = .center
-            default: scaling = (options[.allowClipping] as? Bool) == true ? .fillScreen : .fitToScreen
-            }
-            return (data, url.pathExtension.lowercased() == "png", scaling)
+            return (data, url.pathExtension.lowercased() == "png", scaling(from: options))
         }
         return nil
     }
@@ -88,10 +93,15 @@ enum WallpaperService {
     static func setWallpaper(
         from url: URL,
         scaling: WallpaperScaling = .fitToScreen,
-        applyToAllDesktops: Bool = true
+        applyToAllDesktops: Bool = true,
+        displayIDs: Set<CGDirectDisplayID>? = nil
     ) throws -> Warning? {
         let options = desktopImageOptions(for: scaling)
         for screen in NSScreen.screens {
+            if let displayIDs {
+                guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value,
+                      displayIDs.contains(id) else { continue }
+            }
             var opts = options
             opts[.fillColor] = NSColor.black
             try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: opts)

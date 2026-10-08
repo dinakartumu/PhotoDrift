@@ -81,3 +81,8 @@ The app icon is generated rather than hand-drawn — see [`Tools/GenerateAppIcon
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Recovery respects Pause and enabled album selections. With all-desktops disabled, display
+configuration changes preserve existing desktops and initialize only newly attached screens;
+Space changes and delayed retries do not apply to other desktops. Cache upgrades copy downloads
+once from both older locations while preserving files that macOS may still reference.

@@ -14,7 +14,13 @@ final class ShuffleEngine {
     private(set) var lastShuffleDate: Date?
     private(set) var nextShuffleDate: Date?
     private(set) var currentSource: String?
-    private(set) var statusMessage: String?
+    private var taskStatusMessage: String?
+    private var wallpaperRefreshError: String?
+    private(set) var statusMessage: String? {
+        get { wallpaperRefreshError ?? taskStatusMessage }
+        set { taskStatusMessage = newValue }
+    }
+    private var recoveryPaused = false
 
     private var timerCancellable: AnyCancellable?
     private var observerCancellable: AnyCancellable?
@@ -29,15 +35,17 @@ final class ShuffleEngine {
         self.modelContainer = modelContainer
         self.unifiedPool = UnifiedPool(modelContainer: modelContainer)
         self.wallpaperCoordinator = wallpaperCoordinator
+        wallpaperCoordinator.shouldRecover = { [weak self] in
+            guard let self, !self.recoveryPaused else { return false }
+            let context = ModelContext(self.modelContainer)
+            let settings = AppSettings.current(in: context)
+            let albums = (try? context.fetch(FetchDescriptor<Album>(predicate: #Predicate { $0.isSelected }))) ?? []
+            return albums.contains { $0.sourceType == .applePhotos ? settings.photosEnabled : settings.lightroomEnabled }
+        }
         wallpaperCoordinator.onRefreshError = { [weak self] message in
             guard let self else { return }
-            if let message {
-                self.statusMessage = message
-                self.postStateChange()
-            } else if self.statusMessage?.hasPrefix("Wallpaper refresh failed:") == true {
-                self.statusMessage = nil
-                self.postStateChange()
-            }
+            self.wallpaperRefreshError = message
+            self.postStateChange()
         }
     }
 
@@ -66,6 +74,8 @@ final class ShuffleEngine {
     func start() {
         guard !isRunning else { return }
         isRunning = true
+        recoveryPaused = false
+        wallpaperCoordinator.restoreAfterLaunchOrWake()
         scheduleNext()
         startObservers()
         cleanStaleCacheEntries()
@@ -86,6 +96,8 @@ final class ShuffleEngine {
 
     func stop() {
         isRunning = false
+        recoveryPaused = true
+        wallpaperCoordinator.cancelRefresh()
         timerCancellable?.cancel()
         timerCancellable = nil
         nextShuffleDate = nil
@@ -277,12 +289,19 @@ final class ShuffleEngine {
                     lastShuffleDate = Date()
                     currentSource = "Photos (offline)"
                     statusMessage = wallpaperWarningMessage(from: warning)
+                } catch let error as WallpaperCoordinator.ApplicationError {
+                    statusMessage = nil
+                    wallpaperRefreshError = error.localizedDescription
                 } catch {
                     statusMessage = "Offline, no cached photos available"
                 }
             } else {
                 statusMessage = "Network offline"
             }
+            postStateChange()
+        } catch let error as WallpaperCoordinator.ApplicationError {
+            statusMessage = nil
+            wallpaperRefreshError = error.localizedDescription
             postStateChange()
         } catch {
             statusMessage = "Error: \(error.localizedDescription)"

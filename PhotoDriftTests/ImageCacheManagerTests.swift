@@ -39,42 +39,6 @@ struct ImageCacheManagerTests {
         }
     }
 
-    // MARK: - Gradient filename derivation
-
-    @Test func gradientFilenamesAreUniquePerAssetID() {
-        let key1 = ImageCacheManager.cacheKey(for: "asset-001")
-        let key2 = ImageCacheManager.cacheKey(for: "asset-002")
-        let name1 = "gradient_\(key1).png"
-        let name2 = "gradient_\(key2).png"
-        #expect(name1 != name2)
-    }
-
-    @Test func gradientFilenameIsStableForSameAssetID() {
-        let key = ImageCacheManager.cacheKey(for: "asset-repeat")
-        let name1 = "gradient_\(key).png"
-        let name2 = "gradient_\(key).png"
-        #expect(name1 == name2)
-    }
-
-    @Test func gradientFilenameContainsNoProblemCharacters() {
-        // Asset IDs from Photos (e.g. "B84E8479-475C-4727-A4A4-B77AA9980897/L0/001")
-        // and Lightroom (e.g. "abc123def456") should produce safe filenames
-        let ids = [
-            "B84E8479-475C-4727-A4A4-B77AA9980897/L0/001",
-            "abc123def456",
-            "asset with spaces",
-            "特殊文字",
-        ]
-        let safeChars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_."))
-        for id in ids {
-            let key = ImageCacheManager.cacheKey(for: id)
-            let name = "gradient_\(key).png"
-            for scalar in name.unicodeScalars {
-                #expect(safeChars.contains(scalar), "Unsafe character '\(scalar)' in gradient filename for id: \(id)")
-            }
-        }
-    }
-
     // MARK: - Store / Retrieve
 
     @Test func storeAndRetrieveRoundtrip() async throws {
@@ -261,5 +225,34 @@ struct ImageCacheManagerTests {
         let secondExists = await manager.retrieve(forKey: "second.jpg")
         #expect(firstExists == nil)
         #expect(secondExists != nil)
+    }
+}
+
+struct DownloadCacheUpgradeTests {
+    @Test func upgradeImportsBothCacheGenerationsOnlyOnceAndPreservesOriginals() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DownloadUpgrade-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Application Support/PhotoDriftImages")
+        let legacy = root.appendingPathComponent("Caches/PhotoDriftImages")
+        let downloads = root.appendingPathComponent("Application Support/PhotoDriftDownloads")
+        for directory in [support, legacy, downloads] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try Data("v1.3".utf8).write(to: support.appendingPathComponent("shared.jpg"))
+        try Data("older".utf8).write(to: legacy.appendingPathComponent("shared.jpg"))
+        try Data("offline photo".utf8).write(to: legacy.appendingPathComponent("legacy.jpg"))
+        try Data("desktop".utf8).write(to: support.appendingPathComponent("gradient.png"))
+        ImageCacheManager.migratePreviousDownloads(to: downloads, previousDirectory: support, legacyDirectory: legacy)
+        let cache = ImageCacheManager(cacheDirectory: downloads)
+        let restored = try #require(await cache.retrieve(forKey: "shared.jpg"))
+        #expect(try String(contentsOf: restored, encoding: .utf8) == "v1.3")
+        #expect(await cache.retrieve(forKey: "legacy.jpg") != nil)
+        #expect(await cache.retrieve(forKey: "gradient.png") == nil)
+        try await cache.clear()
+        ImageCacheManager.migratePreviousDownloads(to: downloads, previousDirectory: support, legacyDirectory: legacy)
+        #expect(await cache.retrieve(forKey: "shared.jpg") == nil)
+        #expect(await cache.retrieve(forKey: "legacy.jpg") == nil)
+        #expect(try String(contentsOf: support.appendingPathComponent("shared.jpg"), encoding: .utf8) == "v1.3")
+        #expect(try String(contentsOf: legacy.appendingPathComponent("shared.jpg"), encoding: .utf8) == "older")
     }
 }

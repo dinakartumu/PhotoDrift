@@ -25,6 +25,11 @@ actor ImageCacheManager {
             .appendingPathComponent(directoryName, isDirectory: true)
     }
 
+    static var previousCacheDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("PhotoDriftImages", isDirectory: true)
+    }
+
     /// Where images used to be cached, before the move off the system-purgeable location.
     static var legacyCacheDirectory: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -38,7 +43,7 @@ actor ImageCacheManager {
         cacheDirectory = Self.defaultCacheDirectory
         maxBytes = 500 * 1024 * 1024 // 500 MB
         Self.prepareDirectory(at: cacheDirectory)
-        Self.migrateIfNeeded(from: Self.legacyCacheDirectory, to: cacheDirectory)
+        Self.migratePreviousDownloads(to: cacheDirectory)
     }
 
     init(cacheDirectory: URL, maxBytes: UInt64 = 500 * 1024 * 1024) {
@@ -55,21 +60,38 @@ actor ImageCacheManager {
         try? url.setResourceValues(values)
     }
 
+    static func migratePreviousDownloads(
+        to directory: URL,
+        previousDirectory: URL = previousCacheDirectory,
+        legacyDirectory: URL = legacyCacheDirectory
+    ) {
+        // Prefer the most recent Application Support cache when both contain a key.
+        migrateIfNeeded(from: previousDirectory, to: directory)
+        migrateIfNeeded(from: legacyDirectory, to: directory)
+    }
+
     /// Copy images left in the old location without invalidating wallpaper references.
     /// Files already present at the destination win — they're at least as fresh as
     /// whatever the previous build left behind.
     static func migrateIfNeeded(from legacyDirectory: URL, to directory: URL) {
         let fm = FileManager.default
-        guard legacyDirectory.standardizedFileURL != directory.standardizedFileURL,
+        // Keep the receipt outside the evictable directory, including after Clear Cache.
+        let sourceKey = cacheKey(for: legacyDirectory.standardizedFileURL.path)
+        let receipt = directory.deletingLastPathComponent()
+            .appendingPathComponent(".\(directory.lastPathComponent)-migration-\(sourceKey).done")
+        guard !fm.fileExists(atPath: receipt.path), legacyDirectory.standardizedFileURL != directory.standardizedFileURL,
               let contents = try? fm.contentsOfDirectory(at: legacyDirectory, includingPropertiesForKeys: nil)
         else { return }
 
-        for url in contents {
+        var completed = true
+        for url in contents where url.pathExtension.lowercased() == "jpg" {
             let destination = directory.appendingPathComponent(url.lastPathComponent)
             if !fm.fileExists(atPath: destination.path) {
-                try? fm.copyItem(at: url, to: destination)
+                do { try fm.copyItem(at: url, to: destination) }
+                catch { completed = false }
             }
         }
+        if completed { try? Data().write(to: receipt, options: .atomic) }
     }
 
     func store(data: Data, forKey key: String) throws -> URL {
