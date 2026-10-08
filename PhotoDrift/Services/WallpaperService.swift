@@ -1,6 +1,31 @@
 import AppKit
 
 enum WallpaperService {
+    /// Only import this app's own images; never adopt a user's unrelated desktop image.
+    static func existingPhotoDriftWallpaper() -> (data: Data, isPNG: Bool, scaling: WallpaperScaling)? {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let directories = [
+            support.appendingPathComponent("PhotoDriftImages", isDirectory: true),
+            ImageCacheManager.legacyCacheDirectory,
+            WallpaperStore.defaultDirectory,
+        ].map { $0.standardizedFileURL }
+        for screen in NSScreen.screens {
+            guard let url = NSWorkspace.shared.desktopImageURL(for: screen),
+                  directories.contains(url.deletingLastPathComponent().standardizedFileURL),
+                  let data = try? Data(contentsOf: url)
+            else { continue }
+            let options = NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:]
+            let scaling: WallpaperScaling
+            switch (options[.imageScaling] as? NSNumber)?.uintValue {
+            case NSImageScaling.scaleAxesIndependently.rawValue: scaling = .stretchToFill
+            case NSImageScaling.scaleNone.rawValue: scaling = .center
+            default: scaling = (options[.allowClipping] as? Bool) == true ? .fillScreen : .fitToScreen
+            }
+            return (data, url.pathExtension.lowercased() == "png", scaling)
+        }
+        return nil
+    }
+
     enum Warning: LocalizedError, Equatable {
         case allDesktopsPermissionDenied
         case allDesktopsAutomationFailed(message: String)

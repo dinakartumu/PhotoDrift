@@ -66,7 +66,15 @@ Built with native AppKit (no SwiftUI) for a lightweight menu bar experience.
 - **Combine** for reactive event handling
 - **Sparkle 2** for updates, the project's one package dependency
 
-Cached images live in Application Support rather than Caches: macOS reclaims disk space by purging sandboxed apps' container caches and terminates the owning app to do it, and these files back the wallpaper currently on screen.
+Downloaded images live in Application Support rather than Caches: macOS reclaims disk space by purging sandboxed apps' container caches and terminates the owning app to do it. PhotoDrift bounds its download cache itself.
+
+Published wallpaper images now live in `Application Support/PhotoDriftWallpapers`, separately
+from the bounded `PhotoDriftDownloads` cache. Published images are deduplicated by content
+and retained across shuffles and restarts because inactive Spaces and disconnected displays
+can still reference them; this storage can grow as new images are shown. Older
+`PhotoDriftImages` directories are preserved for the same reason. The saved current image
+is reapplied immediately on display changes and, when "Apply to All Desktops" is enabled,
+on launch, wake, and Space changes, with cancellable retries over the next two seconds.
 
 The app icon is generated rather than hand-drawn — see [`Tools/GenerateAppIcon.swift`](Tools/GenerateAppIcon.swift).
 

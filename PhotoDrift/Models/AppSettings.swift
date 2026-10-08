@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-nonisolated enum WallpaperScaling: String, CaseIterable {
+nonisolated enum WallpaperScaling: String, CaseIterable, Codable, Sendable {
     case fillScreen
     case fitToScreen
     case stretchToFill
