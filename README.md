@@ -71,18 +71,18 @@ Downloaded images live in Application Support rather than Caches: macOS reclaims
 Published wallpaper images now live in `Application Support/PhotoDriftWallpapers`, separately
 from the bounded `PhotoDriftDownloads` cache. Published images are deduplicated by content
 and retained across shuffles and restarts because inactive Spaces and disconnected displays
-can still reference them; this storage can grow as new images are shown. Older
+can still reference them; this storage can grow as new images are shown. Fit-to-screen composites use high-quality JPEG to reduce snapshot size. Older
 `PhotoDriftImages` directories are preserved for the same reason. The saved current image
 is reapplied immediately on display changes and, when "Apply to All Desktops" is enabled,
 on launch, wake, and Space changes, with cancellable retries over the next two seconds.
+
+Recovery respects Pause and enabled album selections. With all-desktops disabled, display
+configuration changes preserve existing desktops and initialize only attached screens with a missing or PhotoDrift image;
+Space changes and delayed retries do not apply to other desktops. Cache upgrades copy downloads
+once from both older locations while preserving files that macOS may still reference.
 
 The app icon is generated rather than hand-drawn — see [`Tools/GenerateAppIcon.swift`](Tools/GenerateAppIcon.swift).
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-Recovery respects Pause and enabled album selections. With all-desktops disabled, display
-configuration changes preserve existing desktops and initialize only newly attached screens;
-Space changes and delayed retries do not apply to other desktops. Cache upgrades copy downloads
-once from both older locations while preserving files that macOS may still reference.

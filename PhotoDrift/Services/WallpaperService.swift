@@ -5,6 +5,14 @@ enum WallpaperService {
         Set(NSScreen.screens.compactMap { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value })
     }
 
+    static func canInitializeDisplay(_ displayID: CGDirectDisplayID) -> Bool {
+        guard let screen = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }) else { return false }
+        guard let url = NSWorkspace.shared.desktopImageURL(for: screen) else { return true }
+        return ownsWallpaper(at: url) || (url.isFileURL && !FileManager.default.isReadableFile(atPath: url.path))
+    }
+
     nonisolated static func ownsWallpaper(at url: URL) -> Bool {
         [ImageCacheManager.previousCacheDirectory, ImageCacheManager.legacyCacheDirectory, WallpaperStore.defaultDirectory]
             .contains { $0.standardizedFileURL == url.deletingLastPathComponent().standardizedFileURL }

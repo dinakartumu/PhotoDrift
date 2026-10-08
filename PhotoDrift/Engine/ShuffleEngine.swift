@@ -18,7 +18,7 @@ final class ShuffleEngine {
     private var wallpaperRefreshError: String?
     private(set) var statusMessage: String? {
         get { wallpaperRefreshError ?? taskStatusMessage }
-        set { taskStatusMessage = newValue }
+        set { taskStatusMessage = newValue; wallpaperRefreshError = nil }
     }
     private var recoveryPaused = false
 
@@ -27,11 +27,13 @@ final class ShuffleEngine {
     private var lightroomPollCancellable: AnyCancellable?
     private var selection = ShuffleSelection()
     private let modelContainer: ModelContainer
+    private let imageCache: ImageCacheManager
     private let unifiedPool: UnifiedPool
     private let photoObserver = PhotoLibraryObserver()
     let wallpaperCoordinator: WallpaperCoordinator
 
-    init(modelContainer: ModelContainer, wallpaperCoordinator: WallpaperCoordinator = WallpaperCoordinator()) {
+    init(modelContainer: ModelContainer, wallpaperCoordinator: WallpaperCoordinator = WallpaperCoordinator(), imageCache: ImageCacheManager = .shared) {
+        self.imageCache = imageCache
         self.modelContainer = modelContainer
         self.unifiedPool = UnifiedPool(modelContainer: modelContainer)
         self.wallpaperCoordinator = wallpaperCoordinator
@@ -87,7 +89,7 @@ final class ShuffleEngine {
             do {
                 let pool = try await unifiedPool.buildPool()
                 let validKeys = Set(pool.map { ImageCacheManager.cacheKey(for: $0.id) })
-                await ImageCacheManager.shared.removeStaleEntries(validKeys: validKeys)
+                await imageCache.removeStaleEntries(validKeys: validKeys)
             } catch {
                 // Non-critical — stale entries will be evicted by LRU
             }
@@ -229,16 +231,17 @@ final class ShuffleEngine {
         do {
             // Check cache first
             let key = ImageCacheManager.cacheKey(for: pick.id)
-            if let cached = await ImageCacheManager.shared.retrieve(forKey: key) {
+            if let cached = await imageCache.retrieve(forKey: key) {
                 let cachedData = try Data(contentsOf: cached)
+                // Downloads are disposable; consume them so edits under the same asset ID
+                // are fetched again. Published snapshots remain untouched.
+                await imageCache.remove(forKey: key)
                 let warning = try setWallpaper(
                     imageData: cachedData,
                     scaling: scaling,
-                    applyToAllDesktops: applyToAllDesktops
+                    applyToAllDesktops: applyToAllDesktops,
+                    onApplied: { [weak self] in self?.recordApplied(pick) }
                 )
-                addToHistory(pick.id)
-                lastShuffleDate = Date()
-                currentSource = pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
                 statusMessage = wallpaperWarningMessage(from: warning)
                 postStateChange()
                 prefetchInBackground(pool: pool)
@@ -249,21 +252,16 @@ final class ShuffleEngine {
             switch pick.sourceType {
             case .applePhotos:
                 imageData = try await PhotoKitConnector.shared.requestImage(assetID: pick.id)
-                currentSource = "Photos"
             case .lightroomCloud:
                 imageData = try await LightroomConnector.shared.downloadImage(assetID: pick.id)
-                currentSource = "Lightroom"
             }
 
-            _ = try await ImageCacheManager.shared.store(data: imageData, forKey: key)
             let warning = try setWallpaper(
                 imageData: imageData,
                 scaling: scaling,
-                applyToAllDesktops: applyToAllDesktops
+                applyToAllDesktops: applyToAllDesktops,
+                onApplied: { [weak self] in self?.recordApplied(pick) }
             )
-
-            addToHistory(pick.id)
-            lastShuffleDate = Date()
             statusMessage = wallpaperWarningMessage(from: warning)
 
             postStateChange()
@@ -278,16 +276,12 @@ final class ShuffleEngine {
             if let fallback = photosOnly.randomElement() {
                 do {
                     let data = try await PhotoKitConnector.shared.requestImage(assetID: fallback.id)
-                    let key = ImageCacheManager.cacheKey(for: fallback.id)
-                    _ = try await ImageCacheManager.shared.store(data: data, forKey: key)
                     let warning = try setWallpaper(
                         imageData: data,
                         scaling: scaling,
-                        applyToAllDesktops: applyToAllDesktops
+                        applyToAllDesktops: applyToAllDesktops,
+                        onApplied: { [weak self] in self?.recordApplied(fallback, offline: true) }
                     )
-                    addToHistory(fallback.id)
-                    lastShuffleDate = Date()
-                    currentSource = "Photos (offline)"
                     statusMessage = wallpaperWarningMessage(from: warning)
                 } catch let error as WallpaperCoordinator.ApplicationError {
                     statusMessage = nil
@@ -312,18 +306,19 @@ final class ShuffleEngine {
     private func setWallpaper(
         imageData: Data,
         scaling: WallpaperScaling,
-        applyToAllDesktops: Bool
+        applyToAllDesktops: Bool,
+        onApplied: @escaping () -> Void
     ) throws -> WallpaperService.Warning? {
         if scaling == .fitToScreen,
            let composited = GradientRenderer.composite(imageData: imageData, screenSize: ScreenUtility.targetSize) {
             return try wallpaperCoordinator.publish(
-                data: composited, isPNG: true, scaling: .fillScreen,
-                applyToAllDesktops: applyToAllDesktops
+                data: composited, isPNG: false, scaling: .fillScreen,
+                applyToAllDesktops: applyToAllDesktops, onApplied: onApplied
             )
         }
         return try wallpaperCoordinator.publish(
             data: imageData, isPNG: false, scaling: scaling,
-            applyToAllDesktops: applyToAllDesktops
+            applyToAllDesktops: applyToAllDesktops, onApplied: onApplied
         )
     }
 
@@ -340,13 +335,15 @@ final class ShuffleEngine {
         NotificationCenter.default.post(name: .shuffleEngineStateChanged, object: self)
     }
 
-    private func addToHistory(_ id: String) {
-        selection.addToHistory(id)
+    private func recordApplied(_ pick: UnifiedPool.PoolEntry, offline: Bool = false) {
+        selection.addToHistory(pick.id)
+        lastShuffleDate = Date()
+        currentSource = offline ? "Photos (offline)" : pick.sourceType == .applePhotos ? "Photos" : "Lightroom"
     }
 
     @MainActor
     func handleLightroomAuthStateChanged(signedIn: Bool) {
-        guard signedIn, statusMessage == "Lightroom: please sign in again" else { return }
+        guard signedIn, taskStatusMessage == "Lightroom: please sign in again" else { return }
         statusMessage = nil
         postStateChange()
     }
@@ -367,20 +364,20 @@ final class ShuffleEngine {
         // inside the detached task races the main actor mutating it after each shuffle.
         let candidates = Self.prefetchCandidates(from: pool, excluding: selection.recentHistory)
 
-        Task.detached {
+        Task.detached { [imageCache] in
             for candidate in candidates {
                 let key = ImageCacheManager.cacheKey(for: candidate.id)
-                let cached = await ImageCacheManager.shared.retrieve(forKey: key)
+                let cached = await imageCache.retrieve(forKey: key)
                 if cached != nil { continue }
 
                 do {
                     switch candidate.sourceType {
                     case .applePhotos:
                         let data = try await PhotoKitConnector.shared.requestImage(assetID: candidate.id)
-                        _ = try await ImageCacheManager.shared.store(data: data, forKey: key)
+                        _ = try await imageCache.store(data: data, forKey: key)
                     case .lightroomCloud:
                         let data = try await LightroomConnector.shared.downloadImage(assetID: candidate.id)
-                        _ = try await ImageCacheManager.shared.store(data: data, forKey: key)
+                        _ = try await imageCache.store(data: data, forKey: key)
                     }
                 } catch {
                     // Prefetch failures are non-critical

@@ -56,6 +56,7 @@ struct WallpaperStoreTests {
 @MainActor
 struct WallpaperRecoveryTests {
     @MainActor private final class Harness {
+        let cache: ImageCacheManager
         let store: WallpaperStore
         var coordinator: WallpaperCoordinator!
         var urls: [URL] = []
@@ -63,6 +64,7 @@ struct WallpaperRecoveryTests {
         var delays: [Duration] = []
         var allDesktops = true
         var displays: Set<CGDirectDisplayID> = [1]
+        var canInitialize = true
         var targets: [Set<CGDirectDisplayID>?] = []
         var failuresRemaining = 0
         var warning: WallpaperService.Warning?
@@ -71,11 +73,13 @@ struct WallpaperRecoveryTests {
         init() throws {
             store = WallpaperStore(directory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("WallpaperRecoveryTests-\(UUID().uuidString)"))
+            cache = ImageCacheManager(cacheDirectory: store.directory.appendingPathComponent("downloads"))
             _ = try store.publish(data: Data("current".utf8), isPNG: true, scaling: .fillScreen)
             coordinator = WallpaperCoordinator(
                 store: store,
                 appliesToAllDesktops: { [unowned self] in self.allDesktops },
                 displayIDs: { [unowned self] in self.displays },
+                canInitializeDisplay: { [unowned self] _ in self.canInitialize },
                 apply: { [unowned self] url, _, automate, targets in
                     self.targets.append(targets)
                     self.urls.append(url)
@@ -210,6 +214,18 @@ struct WallpaperRecoveryTests {
         #expect(h.targets.last! == Set([2])) // Only the attached monitor, never Space B.
     }
 
+    @Test func currentDesktopModePreservesCustomWallpaperOnReconnect() throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        h.allDesktops = false
+        h.displays = []
+        h.coordinator.screensChanged()
+        h.canInitialize = false
+        h.displays = [1]
+        h.coordinator.screensChanged()
+        #expect(h.urls.isEmpty)
+    }
+
     @Test func disablingAllDesktopsStopsPendingSpaceRetries() async throws {
         let h = try Harness()
         defer { h.cleanup() }
@@ -228,7 +244,7 @@ struct WallpaperRecoveryTests {
         context.insert(AppSettings(photosEnabled: false, lightroomEnabled: true, wallpaperScaling: .center))
         context.insert(Asset(id: album.id, sourceType: .lightroomCloud, album: album))
         try context.save()
-        return (ShuffleEngine(modelContainer: container, wallpaperCoordinator: h.coordinator), container, album)
+        return (ShuffleEngine(modelContainer: container, wallpaperCoordinator: h.coordinator, imageCache: h.cache), container, album)
     }
 
     @Test func initialPublicationErrorClearsAfterRecoveryInEngine() async throws {
@@ -237,13 +253,19 @@ struct WallpaperRecoveryTests {
         let (engine, container, album) = try makeEngine(h)
         _ = container // Keep the in-memory database alive through the operation.
         let key = ImageCacheManager.cacheKey(for: album.id)
-        _ = try await ImageCacheManager.shared.store(data: Data("photo".utf8), forKey: key)
+        _ = try await h.cache.store(data: Data("photo".utf8), forKey: key)
         h.failuresRemaining = 1
         await engine.shuffleNow()
         #expect(engine.statusMessage?.hasPrefix("Wallpaper refresh failed:") == true)
         await h.coordinator.refreshTask?.value
         #expect(engine.statusMessage == nil)
-        await ImageCacheManager.shared.remove(forKey: key)
+        #expect(engine.lastShuffleDate != nil)
+        #expect(engine.currentSource == "Lightroom")
+        let appliedDate = engine.lastShuffleDate
+        h.coordinator.activeSpaceChanged()
+        await h.coordinator.refreshTask?.value
+        #expect(engine.lastShuffleDate == appliedDate) // Bookkeeping runs exactly once.
+        await h.cache.remove(forKey: key)
     }
 
     @Test func transientRefreshErrorDoesNotEraseAutomationWarning() async throws {
@@ -252,7 +274,7 @@ struct WallpaperRecoveryTests {
         let (engine, container, album) = try makeEngine(h)
         _ = container
         let key = ImageCacheManager.cacheKey(for: album.id)
-        _ = try await ImageCacheManager.shared.store(data: Data("photo".utf8), forKey: key)
+        _ = try await h.cache.store(data: Data("photo".utf8), forKey: key)
         h.warning = .allDesktopsPermissionDenied
         await engine.shuffleNow()
         let warning = try #require(engine.statusMessage)
@@ -261,7 +283,38 @@ struct WallpaperRecoveryTests {
         #expect(engine.statusMessage != warning)
         await h.coordinator.refreshTask?.value
         #expect(engine.statusMessage == warning)
-        await ImageCacheManager.shared.remove(forKey: key)
+        await h.cache.remove(forKey: key)
+    }
+
+    @Test func displayedDownloadsAreConsumedSoEditedAssetsCanRefresh() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        _ = container
+        let key = ImageCacheManager.cacheKey(for: album.id)
+        _ = try await h.cache.store(data: Data("original".utf8), forKey: key)
+        await engine.shuffleNow()
+        let old = try #require(h.store.restore())
+        #expect(await h.cache.retrieve(forKey: key) == nil)
+        _ = try await h.cache.store(data: Data("edited".utf8), forKey: key)
+        await engine.shuffleNow()
+        let new = try #require(h.store.restore())
+        #expect(try Data(contentsOf: h.store.url(for: new)) == Data("edited".utf8))
+        #expect(try Data(contentsOf: h.store.url(for: old)) == Data("original".utf8))
+        #expect(await h.cache.retrieve(forKey: key) == nil)
+    }
+
+    @Test func newShuffleMessageReplacesStaleRecoveryError() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        let (engine, container, album) = try makeEngine(h)
+        h.failuresRemaining = 1
+        h.coordinator.activeSpaceChanged()
+        #expect(engine.statusMessage?.hasPrefix("Wallpaper refresh failed:") == true)
+        album.isSelected = false
+        try container.mainContext.save()
+        await engine.shuffleNow()
+        #expect(engine.statusMessage == "No photos available")
     }
 
     @Test func pauseAndDeselectionDisableEnvironmentalRecovery() async throws {

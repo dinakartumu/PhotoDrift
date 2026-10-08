@@ -10,6 +10,8 @@ final class WallpaperCoordinator {
     private let apply: Apply
     private let sleep: Sleep
     private let appliesToAllDesktops: () -> Bool
+    private var pendingApplication: (() -> Void)?
+    private let canInitializeDisplay: (CGDirectDisplayID) -> Bool
     private let displayIDs: () -> Set<CGDirectDisplayID>
     private var knownDisplayIDs: Set<CGDirectDisplayID>
     var shouldRecover: () -> Bool = { true }
@@ -28,6 +30,7 @@ final class WallpaperCoordinator {
         appliesToAllDesktops: @escaping () -> Bool = { WallpaperTargetPreferences.applyToAllDesktops },
         legacyWallpaper: @escaping () -> (data: Data, isPNG: Bool, scaling: WallpaperScaling)? = { WallpaperService.existingPhotoDriftWallpaper() },
         displayIDs: @escaping () -> Set<CGDirectDisplayID> = { WallpaperService.connectedDisplayIDs },
+        canInitializeDisplay: @escaping (CGDirectDisplayID) -> Bool = { WallpaperService.canInitializeDisplay($0) },
         apply: @escaping Apply = { try WallpaperService.setWallpaper(from: $0, scaling: $1, applyToAllDesktops: $2, displayIDs: $3) },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
@@ -36,6 +39,7 @@ final class WallpaperCoordinator {
         self.legacyWallpaper = legacyWallpaper
         self.apply = apply
         self.sleep = sleep
+        self.canInitializeDisplay = canInitializeDisplay
         self.displayIDs = displayIDs
         knownDisplayIDs = displayIDs()
         current = store.restore()
@@ -44,8 +48,9 @@ final class WallpaperCoordinator {
     deinit { refreshTask?.cancel() }
 
     @discardableResult
-    func publish(data: Data, isPNG: Bool, scaling: WallpaperScaling, applyToAllDesktops: Bool) throws -> WallpaperService.Warning? {
+    func publish(data: Data, isPNG: Bool, scaling: WallpaperScaling, applyToAllDesktops: Bool, onApplied: (() -> Void)? = nil) throws -> WallpaperService.Warning? {
         current = try store.publish(data: data, isPNG: isPNG, scaling: scaling)
+        pendingApplication = onApplied
         cancelRefresh()
         guard let current else { return nil }
         // Even a successful API call can precede the end of a Mission Control transition.
@@ -54,6 +59,7 @@ final class WallpaperCoordinator {
         defer { if applyToAllDesktops { scheduleRetries(requiresAllDesktops: true) } }
         do {
             let warning = try apply(store.url(for: current), current.scaling, applyToAllDesktops, nil)
+            completePendingApplication()
             onRefreshError?(nil)
             return warning
         } catch {
@@ -73,9 +79,10 @@ final class WallpaperCoordinator {
             refresh(requiresAllDesktops: true)
         } else {
             cancelRefresh()
-            guard shouldRecover(), !added.isEmpty else { return }
-            // Preserve every existing screen's current Space, including unrelated images.
-            reapplyCurrent(displayIDs: added)
+            let targets = Set(added.filter(canInitializeDisplay))
+            guard shouldRecover(), !targets.isEmpty else { return }
+            // Preserve existing desktops and custom images on reconnected displays.
+            reapplyCurrent(displayIDs: targets)
         }
     }
 
@@ -122,12 +129,19 @@ final class WallpaperCoordinator {
         }
     }
 
+    private func completePendingApplication() {
+        let completion = pendingApplication
+        pendingApplication = nil
+        completion?()
+    }
+
     private func reapplyCurrent(displayIDs: Set<CGDirectDisplayID>? = nil) {
         guard let current else { return }
         do {
             // Uses the existing local file; transition recovery never downloads, renders,
             // or invokes the synchronous all-desktops AppleScript.
             _ = try apply(store.url(for: current), current.scaling, false, displayIDs)
+            completePendingApplication()
             onRefreshError?(nil)
         } catch {
             onRefreshError?("Wallpaper refresh failed: \(error.localizedDescription)")

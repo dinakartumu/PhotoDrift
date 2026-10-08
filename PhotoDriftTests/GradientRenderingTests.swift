@@ -206,10 +206,11 @@ struct GradientRendererTests {
         let result = GradientRenderer.composite(imageData: jpeg, screenSize: screenSize)
         #expect(result != nil)
 
-        // Verify the output is a valid PNG at the right size
+        // Verify the output is a valid JPEG at the right size
         if let data = result,
            let source = CGImageSourceCreateWithData(data as CFData, nil),
            let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            #expect(CGImageSourceGetType(source) as String? == UTType.jpeg.identifier)
             #expect(image.width == 800)
             #expect(image.height == 600)
         } else {

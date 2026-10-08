@@ -30,7 +30,7 @@ nonisolated struct WallpaperStore {
         var excludedDirectory = directory
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
-        try excludedDirectory.setResourceValues(values)
+        try? excludedDirectory.setResourceValues(values)
 
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         let wallpaper = Wallpaper(filename: digest + (isPNG ? ".png" : ".jpg"), scaling: scaling)
