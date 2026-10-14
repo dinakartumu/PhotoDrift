@@ -3,6 +3,16 @@
     <channel>
         <title>PhotoDrift</title>
         <item>
+            <title>1.5</title>
+            <pubDate>Wed, 14 Oct 2026 18:31:11 +0530</pubDate>
+            <link>https://dinakartumu.com/photodrift</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/dinakartumu/PhotoDrift/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>1.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/dinakartumu/PhotoDrift/releases/download/v1.5/PhotoDrift-1.5.dmg" length="2791675" type="application/octet-stream" sparkle:edSignature="wFnOlRmDFYoljVtZcbj4xsRHbR7l0gFTJ6xPzQ3i2lDlr434wH7fPp8w27kSqs/8Ck3MrPmbz+OlW6xJVwXFCg=="/>
+        </item>
+        <item>
             <title>1.4</title>
             <pubDate>Fri, 09 Oct 2026 01:18:04 +0530</pubDate>
             <link>https://dinakartumu.com/photodrift</link>
