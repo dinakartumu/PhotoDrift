@@ -12,6 +12,7 @@ final class WallpaperCoordinator {
     private let appliesToAllDesktops: () -> Bool
     private var pendingApplication: (() -> Void)?
     private let canInitializeDisplay: (CGDirectDisplayID) -> Bool
+    private let isShowing: (CGDirectDisplayID, URL, WallpaperScaling) -> Bool
     private let displayIDs: () -> Set<CGDirectDisplayID>
     private var knownDisplayIDs: Set<CGDirectDisplayID>
     var shouldRecover: () -> Bool = { true }
@@ -31,6 +32,7 @@ final class WallpaperCoordinator {
         legacyWallpaper: @escaping () -> (data: Data, isPNG: Bool, scaling: WallpaperScaling)? = { WallpaperService.existingPhotoDriftWallpaper() },
         displayIDs: @escaping () -> Set<CGDirectDisplayID> = { WallpaperService.connectedDisplayIDs },
         canInitializeDisplay: @escaping (CGDirectDisplayID) -> Bool = { WallpaperService.canInitializeDisplay($0) },
+        isShowing: @escaping (CGDirectDisplayID, URL, WallpaperScaling) -> Bool = { WallpaperService.isShowing($1, scaling: $2, on: $0) },
         apply: @escaping Apply = { try WallpaperService.setWallpaper(from: $0, scaling: $1, applyToAllDesktops: $2, displayIDs: $3) },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
@@ -40,6 +42,7 @@ final class WallpaperCoordinator {
         self.apply = apply
         self.sleep = sleep
         self.canInitializeDisplay = canInitializeDisplay
+        self.isShowing = isShowing
         self.displayIDs = displayIDs
         knownDisplayIDs = displayIDs()
         current = store.restore()
@@ -53,17 +56,22 @@ final class WallpaperCoordinator {
         pendingApplication = onApplied
         cancelRefresh()
         guard let current else { return nil }
-        // Even a successful API call can precede the end of a Mission Control transition.
-        // A delayed call cannot be bound to a Space with public APIs. In current-desktop
-        // mode, apply once so a fast Space switch can never receive a stale retry.
-        defer { if applyToAllDesktops { scheduleRetries(requiresAllDesktops: true) } }
         do {
+            // Apply a successful shuffle once. WallpaperAgent rebuilds the desktop for every
+            // request, showing the default image while it does; a Space transition that
+            // races this call triggers its own recovery through activeSpaceChanged().
             let warning = try apply(store.url(for: current), current.scaling, applyToAllDesktops, nil)
             completePendingApplication()
             onRefreshError?(nil)
             return warning
         } catch {
-            if !applyToAllDesktops { pendingApplication = nil }
+            // A delayed call cannot be bound to a Space with public APIs. In current-desktop
+            // mode, apply once so a fast Space switch can never receive a stale retry.
+            if applyToAllDesktops {
+                scheduleRetries(requiresAllDesktops: true)
+            } else {
+                pendingApplication = nil
+            }
             throw ApplicationError(underlying: error)
         }
     }
@@ -139,10 +147,14 @@ final class WallpaperCoordinator {
 
     private func reapplyCurrent(displayIDs: Set<CGDirectDisplayID>? = nil) {
         guard let current else { return }
+        let url = store.url(for: current)
+        // Every request makes WallpaperAgent rebuild the desktop, flashing the default image
+        // even when nothing changes. Only send it to displays whose Space shows something else.
+        let targets = (displayIDs ?? self.displayIDs()).filter { !isShowing($0, url, current.scaling) }
         do {
             // Uses the existing local file; transition recovery never downloads, renders,
             // or invokes the synchronous all-desktops AppleScript.
-            _ = try apply(store.url(for: current), current.scaling, false, displayIDs)
+            if !targets.isEmpty { _ = try apply(url, current.scaling, false, targets) }
             if displayIDs == nil { completePendingApplication() }
             onRefreshError?(nil)
         } catch {

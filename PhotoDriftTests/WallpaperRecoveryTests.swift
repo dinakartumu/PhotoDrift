@@ -64,6 +64,7 @@ struct WallpaperRecoveryTests {
         var delays: [Duration] = []
         var allDesktops = true
         var displays: Set<CGDirectDisplayID> = [1]
+        var showing: Set<CGDirectDisplayID> = []
         var canInitialize = true
         var targets: [Set<CGDirectDisplayID>?] = []
         var failuresRemaining = 0
@@ -80,6 +81,7 @@ struct WallpaperRecoveryTests {
                 appliesToAllDesktops: { [unowned self] in self.allDesktops },
                 displayIDs: { [unowned self] in self.displays },
                 canInitializeDisplay: { [unowned self] _ in self.canInitialize },
+                isShowing: { [unowned self] id, _, _ in self.showing.contains(id) },
                 apply: { [unowned self] url, _, automate, targets in
                     self.targets.append(targets)
                     self.urls.append(url)
@@ -147,6 +149,45 @@ struct WallpaperRecoveryTests {
         #expect(newURL != oldURL)
         #expect(h.urls.dropFirst().allSatisfy { $0 == newURL })
         #expect(FileManager.default.fileExists(atPath: oldURL.path))
+    }
+
+    @Test func successfulShuffleAppliesTheImageOnlyOnce() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        try h.coordinator.publish(data: Data("new".utf8), isPNG: false, scaling: .center, applyToAllDesktops: true)
+        await h.coordinator.refreshTask?.value
+        // Each repeat makes WallpaperAgent rebuild the desktop, which flashes the default image.
+        #expect(h.urls.count == 1)
+        #expect(h.delays.isEmpty)
+    }
+
+    @Test func spaceChangeSkipsDisplaysAlreadyShowingTheWallpaper() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        h.displays = [1, 2]
+        h.showing = [1]
+        h.coordinator.activeSpaceChanged()
+        await h.coordinator.refreshTask?.value
+        // Re-sending an image a display already shows makes WallpaperAgent rebuild it anyway.
+        #expect(h.urls.count == 4)
+        #expect(h.targets.allSatisfy { $0 == [2] })
+        h.showing = [1, 2]
+        h.coordinator.activeSpaceChanged()
+        await h.coordinator.refreshTask?.value
+        #expect(h.urls.count == 4)
+    }
+
+    @Test func recoveryCompletesAPendingShuffleThatAlreadyReachedEveryDisplay() async throws {
+        let h = try Harness()
+        defer { h.cleanup() }
+        h.failuresRemaining = 1
+        var completions = 0
+        _ = try? h.coordinator.publish(data: Data("new".utf8), isPNG: false, scaling: .center, applyToAllDesktops: true, onApplied: { completions += 1 })
+        h.showing = [1]
+        await h.coordinator.refreshTask?.value
+        #expect(h.urls.count == 1)
+        #expect(completions == 1)
+        #expect(h.errors.last == .some(nil))
     }
 
     @Test func launchAndWakeUsePersistedImageWithoutFirstShuffle() async throws {
