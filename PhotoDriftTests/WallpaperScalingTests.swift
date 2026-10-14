@@ -68,6 +68,34 @@ struct WallpaperScalingOptionTests {
         #expect(source.contains(#"repeat with desk in desktops"#))
         #expect(source.contains(#"set picture of desk to POSIX file "/Users/test/Pictures/wallpaper 1.jpg""#))
     }
+
+    @Test func recognizesADesktopAlreadyShowingTheWallpaper() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("IsShowing-\(UUID().uuidString)")
+        let real = root.appendingPathComponent("real")
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = real.appendingPathComponent("abc.jpg")
+        try Data("photo".utf8).write(to: url)
+        let fill = WallpaperService.desktopImageOptions(for: .fillScreen)
+        #expect(WallpaperService.isShowing(url, scaling: .fillScreen, currentURL: url, currentOptions: fill))
+        // The system may report a different spelling of the same file, e.g. /var vs /private/var.
+        #expect(WallpaperService.isShowing(url, scaling: .fillScreen,
+                                           currentURL: link.appendingPathComponent("abc.jpg"), currentOptions: fill))
+        // Tile and center share options, so either one counts as already applied.
+        #expect(WallpaperService.isShowing(url, scaling: .tile, currentURL: url,
+                                           currentOptions: WallpaperService.desktopImageOptions(for: .center)))
+        #expect(!WallpaperService.isShowing(url, scaling: .center, currentURL: url, currentOptions: fill))
+        #expect(!WallpaperService.isShowing(url, scaling: .fillScreen,
+                                            currentURL: URL(fileURLWithPath: "/tmp/PhotoDriftWallpapers/other.jpg"), currentOptions: fill))
+        #expect(!WallpaperService.isShowing(url, scaling: .fillScreen, currentURL: nil, currentOptions: fill))
+    }
+
+    @Test func allDesktopsAppleScriptSetsEachDesktopOnce() {
+        let source = WallpaperService.allDesktopsAppleScript(for: URL(fileURLWithPath: "/tmp/wallpaper.jpg"))
+        #expect(source.components(separatedBy: "set picture of desk").count - 1 == 1)
+    }
 }
 
 struct WallpaperImportTests {

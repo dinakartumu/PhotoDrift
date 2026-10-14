@@ -14,6 +14,24 @@ enum WallpaperService {
         return canInitializeWallpaper(at: NSWorkspace.shared.desktopImageURL(for: screen))
     }
 
+    static func isShowing(_ url: URL, scaling: WallpaperScaling, on id: CGDirectDisplayID) -> Bool {
+        guard let screen = NSScreen.screens.first(where: { displayID(for: $0) == id }) else { return false }
+        return isShowing(url, scaling: scaling,
+                         currentURL: NSWorkspace.shared.desktopImageURL(for: screen),
+                         currentOptions: NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:])
+    }
+
+    /// Compares what a display reports for its current Space, normalizing path spelling and
+    /// scaling modes that share the same system options.
+    nonisolated static func isShowing(
+        _ url: URL, scaling: WallpaperScaling,
+        currentURL: URL?, currentOptions: [NSWorkspace.DesktopImageOptionKey: Any]
+    ) -> Bool {
+        guard let currentURL, currentURL.isFileURL else { return false }
+        return currentURL.resolvingSymlinksInPath().standardizedFileURL == url.resolvingSymlinksInPath().standardizedFileURL
+            && Self.scaling(from: currentOptions) == Self.scaling(from: desktopImageOptions(for: scaling))
+    }
+
     nonisolated static func canInitializeWallpaper(at url: URL?) -> Bool {
         // Sandbox denial is indistinguishable from absence in fileExists/isReadableFile.
         // An unrelated URL belongs to the user, even when we cannot inspect its file.
@@ -152,10 +170,6 @@ enum WallpaperService {
         return """
         tell application "System Events"
         \(launchPrefix)    -- Apply to every Space/desktop in the active display set.
-            repeat with desk in desktops
-                set picture of desk to POSIX file "\(escapedPath)"
-            end repeat
-            delay 0.2
             repeat with desk in desktops
                 set picture of desk to POSIX file "\(escapedPath)"
             end repeat
